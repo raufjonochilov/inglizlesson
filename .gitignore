@@ -1,0 +1,6 @@
+node_modules/
+.next/
+.local-tts/source/
+.env
+.env.local
+.env*.local
