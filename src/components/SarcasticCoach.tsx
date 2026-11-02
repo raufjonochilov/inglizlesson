@@ -1,4 +1,5 @@
 'use client';
+import BusterAvatar from './BusterAvatar';
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
@@ -705,14 +706,34 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
   const [isTalking, setIsTalking] = useState(false);
   const [activeAudioSpeaker, setActiveAudioSpeaker] = useState<'buster' | 'native' | null>(null);
   const [speechBubbleText, setSpeechBubbleText] = useState<string>(
-    "Oho, xush kelibsan, bo'lajak 'IELTS 9' sohibi! 😏 Men — Professor Busterman. Bu yerda quruq maqtovlar yo'q! 40 ta eng ashaddiy tuzoq savollarim bor. Qani, bittasini tanla-chi, bironta xato qilsang o'sha zahoti seni qovuraman! 🔥"
+    `Salom! Men Professor Busterman. Birinchi tuzoq savol: ${BUILTIN_CHALLENGES[0].question}`
   );
   const [autoSpeech, setAutoSpeech] = useState(true);
+  const [audioState, setAudioState] = useState('idle');
+  const [audioNotice, setAudioNotice] = useState('');
+  useEffect(() => {
+    const listener = (event: Event) => {
+      const state = (event as CustomEvent<string>).detail;
+      setAudioState(state);
+      if (state === 'loading') setAudioNotice('');
+      setIsTalking(state === 'speaking');
+      if (state === 'idle' || state === 'error') setActiveAudioSpeaker(null);
+    };
+    window.addEventListener('lingua:speech', listener);
+    const notice = (event: Event) => setAudioNotice((event as CustomEvent<string>).detail);
+    window.addEventListener('lingua:speech-notice', notice);
+    return () => {
+      window.removeEventListener('lingua:speech', listener);
+      window.removeEventListener('lingua:speech-notice', notice);
+    };
+  }, []);
 
   // Gamification Metrics
   const [correctCount, setCorrectCount] = useState(0);
   const [roastCount, setRoastCount] = useState(0);
   const [heatLevel, setHeatLevel] = useState(65); // 0% to 100%
+  const [combo, setCombo] = useState(0);
+  const [bestCombo, setBestCombo] = useState(0);
 
   // Free talk / Speech input state
   const [freeInputText, setFreeInputText] = useState('');
@@ -731,7 +752,7 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
   // Speech helper: Professor Buster speaking in natural Uzbek (uz-UZ-SardorNeural)
   const playBusterVoice = (text: string) => {
     if (!soundEnabled) return;
-    setIsTalking(true);
+    setIsTalking(false);
     setActiveAudioSpeaker('buster');
     playBusterSpeech(
       text,
@@ -755,18 +776,14 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
     });
   };
 
-  // Initial voice greeting on mount or question change
+  // Speak only the committed result, never the AI's temporary thinking text.
+  // Cleanup cancels stale audio when moving between questions or muting.
   useEffect(() => {
-    if (autoSpeech && soundEnabled && speechBubbleText) {
-      const timer = setTimeout(() => {
-        playBusterVoice(speechBubbleText);
-      }, 500);
-      return () => {
-        clearTimeout(timer);
-        stopSpeaking();
-      };
+    if (autoSpeech && soundEnabled && !isAiLoading && speechBubbleText) {
+      playBusterVoice(speechBubbleText);
     }
-  }, [currentChallengeIndex, activeMode, selectedCategory]);
+    return () => stopSpeaking();
+  }, [speechBubbleText, isAiLoading, autoSpeech, soundEnabled, currentChallengeIndex, activeMode, selectedCategory]);
 
   // Clean up audio on unmount
   useEffect(() => {
@@ -789,29 +806,23 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
     const isCorrect = index === currentChallenge.correctIndex;
 
     if (isCorrect) {
-      setBusterMood('surprised');
+      setBusterMood('laughing');
       setCorrectCount((prev) => prev + 1);
+      setCombo((prev) => { const n = prev + 1; setBestCombo((b) => Math.max(b, n)); return n; });
       setHeatLevel((prev) => Math.max(10, prev - 10));
       const text = currentChallenge.praiseRight;
       setSpeechBubbleText(text);
       if (soundEnabled) SoundFX.playSuccess();
-      if (autoSpeech) {
-        setTimeout(() => {
-          playBusterVoice(text);
-        }, 250);
-      }
+
     } else {
       setBusterMood('roasting');
       setRoastCount((prev) => prev + 1);
+      setCombo(0);
       setHeatLevel((prev) => Math.min(100, prev + 15));
       const text = currentChallenge.roastWrong;
       setSpeechBubbleText(text);
       if (soundEnabled) SoundFX.playBuzzer();
-      if (autoSpeech) {
-        setTimeout(() => {
-          playBusterVoice(text);
-        }, 300);
-      }
+
     }
   };
 
@@ -825,7 +836,7 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
     setCurrentChallengeIndex(nextIdx);
 
     const nextQ = filteredChallenges[nextIdx];
-    const intro = `Keyingi tuzoq savol: ${nextQ.question} Qani, aqlingni ishlat-chi! 😏`;
+    const intro = `Tuzoq savol: ${nextQ.question} Qani, aqlingni ishlat-chi! 😏`;
     setSpeechBubbleText(intro);
     if (soundEnabled) SoundFX.playClick();
   };
@@ -841,7 +852,7 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
     setCurrentChallengeIndex(prevIdx);
 
     const prevQ = filteredChallenges[prevIdx];
-    setSpeechBubbleText(`Oldingi savol: ${prevQ.question}`);
+    setSpeechBubbleText(`Tuzoq savol: ${prevQ.question}`);
     if (soundEnabled) SoundFX.playClick();
   };
 
@@ -874,6 +885,7 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
       });
 
       const data = await res.json();
+      if (!res.ok || !data.reply) throw new Error('AI javobi olinmadi');
       if (data.reply) {
         let replyText = data.reply;
         let mood: BusterMood = 'smirking';
@@ -895,16 +907,14 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
           if (soundEnabled) SoundFX.playSuccess();
         }
 
-        if (autoSpeech) {
-          playBusterVoice(replyText);
-        }
+
       }
     } catch (err) {
       console.error(err);
       setBusterMood('roasting');
       const fallback = "Internet uzildimi yoki miyang muzlab qoldimi? Qaytadan urinib ko'r! 💀 [MOOD: roasting]";
       setSpeechBubbleText(fallback);
-      if (autoSpeech) playBusterVoice(fallback);
+
     } finally {
       setIsAiLoading(false);
     }
@@ -956,7 +966,12 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
   const cleanBubbleText = speechBubbleText.replace(/\[MOOD:\s*\w+\]/gi, '').trim();
 
   return (
-    <div className="max-w-5xl mx-auto p-2 sm:p-5 space-y-5 animate-fade-in text-slate-100">
+    <div
+      className="buster-workspace max-w-5xl mx-auto space-y-5 animate-fade-in"
+      data-mood={busterMood}
+      data-result={activeMode === 'challenge' && isAnswerSubmitted ? (selectedOptionIndex === currentChallenge.correctIndex ? 'right' : 'wrong') : 'idle'}
+      data-combo={combo >= 5 ? 'hot' : combo >= 3 ? 'warm' : 'cold'}
+    >
       {/* 1. TOP STATUS & NAVIGATION BAR */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 glass-panel border border-white/10 p-4 rounded-3xl bg-slate-900/60 shadow-2xl backdrop-blur-xl">
         {/* Profile / Character Tag */}
@@ -972,7 +987,7 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              Jonli 3D Qahramon • {BUILTIN_CHALLENGES.length} ta Tuzoq Savollar
+              AI bilan inglizcha amaliyot • {BUILTIN_CHALLENGES.length} ta Tuzoq Savollar
             </p>
           </div>
         </div>
@@ -1078,6 +1093,10 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
               <button
                 key={cat.key}
                 onClick={() => {
+                  stopSpeaking();
+                  const first = cat.key === 'all' ? BUILTIN_CHALLENGES[0] : BUILTIN_CHALLENGES.find(c => c.categoryKey === cat.key);
+                  if (first) setSpeechBubbleText(`Tuzoq savol: ${first.question}`);
+                  setBusterMood('smirking');
                   setSelectedCategory(cat.key);
                   setCurrentChallengeIndex(0);
                   setIsAnswerSubmitted(false);
@@ -1098,14 +1117,36 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
         </div>
       )}
 
-      {/* 3. GRAND 3D MASCOT STAGE */}
-      <div className="relative rounded-3xl p-6 sm:p-10 border border-orange-500/30 shadow-2xl bg-gradient-to-b from-slate-900/90 via-slate-950/95 to-slate-900/90 backdrop-blur-2xl overflow-hidden flex flex-col items-center">
-        {/* Atmospheric Glowing Neon Lights behind Buster */}
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 rounded-full bg-orange-600/20 blur-[100px] pointer-events-none animate-pulse-glow" />
-        <div className="absolute bottom-10 left-1/2 -translate-x-1/2 w-96 h-28 bg-red-500/15 blur-[60px] pointer-events-none" />
+      {/* STAGE HUD: combo meter */}
+      {activeMode === 'challenge' && (
+        <div className="stage-hud" aria-live="polite">
+          <div className="stage-combo">
+            <span className="stage-combo-flame" aria-hidden="true">🔥</span>
+            <strong key={combo}>×{combo}</strong>
+            <span>Olqish seriyasi</span>
+          </div>
+          <div className="stage-combo-track" aria-hidden="true">
+            {Array.from({ length: 5 }, (_, i) => <i key={i} className={i < Math.min(combo, 5) ? 'is-on' : ''} />)}
+          </div>
+          <span className="stage-best">Rekord: ×{bestCombo}</span>
+        </div>
+      )}
 
+      {/* 3. GRAND 3D MASCOT STAGE */}
+      <div className="buster-practice">
+        <div className="stage-spot" aria-hidden="true" />
+        <div className="stage-floor" aria-hidden="true" />
+        {activeMode === 'challenge' && isAnswerSubmitted && selectedOptionIndex === currentChallenge.correctIndex && (
+          <div className="buster-celebration" key={currentChallenge.id}>
+            <div className="celebration-confetti" aria-hidden="true">
+              {Array.from({ length: 18 }, (_, i) => <span key={i} style={{ left: `${5 + i * 5}%`, animationDelay: `${(i % 6) * .09}s` }}>{['✦', '★', '●'][i % 3]}</span>)}
+            </div>
+            <p role="status"><span aria-hidden="true">🎉</span> Barakalla! To‘g‘ri topdingiz! <span aria-hidden="true">👏</span></p>
+          </div>
+        )}
         {/* Dynamic Speech Bubble coming directly from Buster */}
         <div className="relative z-20 max-w-2xl w-full mb-6">
+          <BusterAvatar mood={busterMood} talking={isTalking}/>
           <div
             className={`p-5 sm:p-6 rounded-3xl border shadow-2xl backdrop-blur-xl relative transition-all duration-300 ${
               busterMood === 'roasting'
@@ -1115,17 +1156,6 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
                 : 'bg-slate-900/85 border-orange-400/40 shadow-orange-500/10'
             }`}
           >
-            {/* Bubble Tail pointing down to Buster */}
-            <div
-              className={`absolute -bottom-3 left-1/2 -translate-x-1/2 w-6 h-6 rotate-45 border-r border-b ${
-                busterMood === 'roasting'
-                  ? 'bg-red-950 border-red-500/60'
-                  : busterMood === 'surprised'
-                  ? 'bg-amber-950 border-amber-500/60'
-                  : 'bg-slate-900 border-orange-400/40'
-              }`}
-            />
-
             <div className="flex items-start justify-between gap-3">
               <div className="space-y-1.5 flex-1">
                 <div className="flex items-center gap-2">
@@ -1145,13 +1175,17 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
                   )}
                 </div>
 
-                <p className="text-sm sm:text-base font-semibold text-slate-100 leading-relaxed whitespace-pre-wrap">
+                <p key={cleanBubbleText} className="text-sm sm:text-base font-semibold text-slate-100 leading-relaxed whitespace-pre-wrap bubble-type">
                   {cleanBubbleText}
                 </p>
+                {audioState === 'loading' && <p role="status" className="text-xs text-amber-300">Ovoz tayyorlanmoqda… Tayyor bo‘lishi bilan gapiradi.</p>}
+                {audioState === 'error' && <p role="alert" className="text-xs text-red-300">{audioNotice || 'Mos ovoz topilmadi. Ovoz sozlamalarida Microsoft ovozini tanlang.'}</p>}
+                {audioNotice && audioState !== 'error' && <p role="status" className="text-xs text-amber-300">{audioNotice}</p>}
               </div>
 
               {/* Replay Buster Voice Audio Button */}
               <button
+                disabled={isAiLoading}
                 onClick={() => playBusterVoice(cleanBubbleText)}
                 title="Buster ovozini qayta eshitish (O'zbekcha)"
                 className="p-2.5 rounded-2xl bg-white/10 hover:bg-white/20 text-orange-400 hover:text-white transition shadow-sm hover:scale-105 shrink-0"
@@ -1160,188 +1194,6 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
               </button>
             </div>
           </div>
-        </div>
-
-        {/* 3D ANIMATED BUSTER CHARACTER */}
-        <div className="relative z-10 flex flex-col items-center select-none my-2">
-          {/* Reaction Icons floating around Buster */}
-          <div className="absolute -top-6 -right-8 z-30 animate-bounce">
-            {busterMood === 'roasting' && (
-              <span className="px-3 py-1 rounded-full bg-red-600 text-white text-xs font-black shadow-lg shadow-red-600/50 flex items-center gap-1">
-                🔥 ROAST!
-              </span>
-            )}
-            {busterMood === 'laughing' && (
-              <span className="px-3 py-1 rounded-full bg-amber-500 text-slate-900 text-xs font-black shadow-lg shadow-amber-500/50 flex items-center gap-1">
-                🤣 HAHAHA!
-              </span>
-            )}
-            {busterMood === 'surprised' && (
-              <span className="px-3 py-1 rounded-full bg-cyan-500 text-slate-900 text-xs font-black shadow-lg shadow-cyan-500/50 flex items-center gap-1">
-                🤯 QOYIL?!
-              </span>
-            )}
-          </div>
-
-          {/* SVG Character Avatar with rich expressions */}
-          <div
-            className={`w-48 h-48 sm:w-56 sm:h-56 transition-transform duration-300 ${
-              isTalking ? 'scale-105' : 'hover:scale-105'
-            }`}
-          >
-            <svg
-              viewBox="0 0 200 200"
-              className={`w-full h-full filter drop-shadow-[0_15px_25px_rgba(249,115,22,0.35)] ${
-                busterMood === 'roasting'
-                  ? 'animate-shake'
-                  : busterMood === 'laughing'
-                  ? 'animate-bounce'
-                  : isTalking
-                  ? 'animate-pulse'
-                  : 'animate-float-slow'
-              }`}
-            >
-              {/* Pedestal Aura */}
-              <ellipse cx="100" cy="185" rx="60" ry="12" fill="url(#pedestalGlow)" opacity="0.6" />
-
-              <defs>
-                <radialGradient id="pedestalGlow" cx="50%" cy="50%" r="50%">
-                  <stop offset="0%" stopColor="#f97316" stopOpacity="0.8" />
-                  <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
-                </radialGradient>
-                <linearGradient id="skinGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#fed7aa" />
-                  <stop offset="100%" stopColor="#f97316" />
-                </linearGradient>
-                <linearGradient id="suitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#312e81" />
-                  <stop offset="100%" stopColor="#1e1b4b" />
-                </linearGradient>
-                <linearGradient id="hairGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stopColor="#78350f" />
-                  <stop offset="100%" stopColor="#451a03" />
-                </linearGradient>
-              </defs>
-
-              {/* Steam puffs from ears when roasting */}
-              {busterMood === 'roasting' && (
-                <>
-                  <circle cx="35" cy="85" r="8" fill="#ef4444" opacity="0.7" className="animate-ping" />
-                  <circle cx="25" cy="75" r="6" fill="#f97316" opacity="0.5" className="animate-pulse" />
-                  <circle cx="165" cy="85" r="8" fill="#ef4444" opacity="0.7" className="animate-ping" />
-                  <circle cx="175" cy="75" r="6" fill="#f97316" opacity="0.5" className="animate-pulse" />
-                </>
-              )}
-
-              {/* Laughing tears when laughing */}
-              {busterMood === 'laughing' && (
-                <>
-                  <circle cx="60" cy="105" r="5" fill="#38bdf8" className="animate-bounce" />
-                  <circle cx="140" cy="105" r="5" fill="#38bdf8" className="animate-bounce" />
-                </>
-              )}
-
-              {/* Body / Blazer */}
-              <path
-                d="M50 170 C50 145, 75 140, 100 140 C125 140, 150 145, 150 170 L160 190 L40 190 Z"
-                fill="url(#suitGrad)"
-                stroke="#4338ca"
-                strokeWidth="2"
-              />
-
-              {/* Shirt Collar & Bowtie */}
-              <polygon points="90,140 100,152 110,140" fill="#ffffff" />
-              <polygon points="85,148 100,152 85,156" fill="#dc2626" />
-              <polygon points="115,148 100,152 115,156" fill="#dc2626" />
-              <circle cx="100" cy="152" r="3" fill="#991b1b" />
-
-              {/* Head / Face */}
-              <circle cx="100" cy="95" r="48" fill="url(#skinGrad)" stroke="#ea580c" strokeWidth="2" />
-
-              {/* Professor Hair */}
-              <path
-                d="M55 85 C50 50, 75 40, 100 40 C125 40, 150 50, 145 85 C140 55, 125 50, 100 50 C75 50, 60 55, 55 85 Z"
-                fill="url(#hairGrad)"
-              />
-              <path d="M48 90 C42 80, 45 70, 52 65 C48 75, 48 85, 48 90 Z" fill="url(#hairGrad)" />
-              <path d="M152 90 C158 80, 155 70, 148 65 C152 75, 152 85, 152 90 Z" fill="url(#hairGrad)" />
-
-              {/* Eyebrows */}
-              {busterMood === 'roasting' ? (
-                <>
-                  <line x1="68" y1="78" x2="88" y2="85" stroke="#451a03" strokeWidth="4" strokeLinecap="round" />
-                  <line x1="132" y1="78" x2="112" y2="85" stroke="#451a03" strokeWidth="4" strokeLinecap="round" />
-                </>
-              ) : busterMood === 'surprised' ? (
-                <>
-                  <path d="M68 76 Q78 68 88 76" stroke="#451a03" strokeWidth="4" fill="none" strokeLinecap="round" />
-                  <path d="M112 76 Q122 68 132 76" stroke="#451a03" strokeWidth="4" fill="none" strokeLinecap="round" />
-                </>
-              ) : (
-                <>
-                  <path d="M68 78 Q78 72 88 80" stroke="#451a03" strokeWidth="4" fill="none" strokeLinecap="round" />
-                  <path d="M112 80 Q122 72 132 78" stroke="#451a03" strokeWidth="4" fill="none" strokeLinecap="round" />
-                </>
-              )}
-
-              {/* Spectacles / Glasses Frames */}
-              <circle cx="78" cy="94" r="16" fill="rgba(255,255,255,0.2)" stroke="#1e293b" strokeWidth="3" />
-              <circle cx="122" cy="94" r="16" fill="rgba(255,255,255,0.2)" stroke="#1e293b" strokeWidth="3" />
-              <line x1="94" y1="94" x2="106" y2="94" stroke="#1e293b" strokeWidth="3" />
-
-              {/* Eyes */}
-              {busterMood === 'laughing' ? (
-                <>
-                  <path d="M72 94 Q78 88 84 94" stroke="#0f172a" strokeWidth="3" fill="none" />
-                  <path d="M116 94 Q122 88 128 94" stroke="#0f172a" strokeWidth="3" fill="none" />
-                </>
-              ) : busterMood === 'surprised' ? (
-                <>
-                  <circle cx="78" cy="94" r="8" fill="#0f172a" />
-                  <circle cx="80" cy="92" r="3" fill="#ffffff" />
-                  <circle cx="122" cy="94" r="8" fill="#0f172a" />
-                  <circle cx="124" cy="92" r="3" fill="#ffffff" />
-                </>
-              ) : busterMood === 'roasting' ? (
-                <>
-                  <ellipse cx="78" cy="94" rx="7" ry="5" fill="#dc2626" />
-                  <circle cx="80" cy="93" r="2" fill="#ffffff" />
-                  <ellipse cx="122" cy="94" rx="7" ry="5" fill="#dc2626" />
-                  <circle cx="124" cy="93" r="2" fill="#ffffff" />
-                </>
-              ) : (
-                <>
-                  <ellipse cx="78" cy="94" rx="6" ry="6" fill="#0f172a" />
-                  <circle cx="80" cy="92" r="2" fill="#ffffff" />
-                  <ellipse cx="122" cy="94" rx="6" ry="6" fill="#0f172a" />
-                  <circle cx="124" cy="92" r="2" fill="#ffffff" />
-                </>
-              )}
-
-              {/* Glasses Glint */}
-              <line x1="68" y1="86" x2="74" y2="86" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" opacity="0.8" />
-              <line x1="112" y1="86" x2="118" y2="86" stroke="#ffffff" strokeWidth="2" strokeLinecap="round" opacity="0.8" />
-
-              {/* Nose */}
-              <path d="M98 98 Q100 106 104 104" stroke="#ea580c" strokeWidth="2.5" fill="none" strokeLinecap="round" />
-
-              {/* Mouth with reactive animation */}
-              {busterMood === 'laughing' ? (
-                <path d="M85 116 Q100 134 115 116 Z" fill="#991b1b" stroke="#7f1d1d" strokeWidth="2" />
-              ) : busterMood === 'roasting' ? (
-                <path d="M86 118 Q100 128 114 118 Z" fill="#7f1d1d" stroke="#450a0a" strokeWidth="2" />
-              ) : busterMood === 'surprised' ? (
-                <ellipse cx="100" cy="120" rx="8" ry="12" fill="#7f1d1d" stroke="#450a0a" strokeWidth="2" />
-              ) : isTalking ? (
-                <ellipse cx="100" cy="118" rx="10" ry="6" fill="#7f1d1d" stroke="#ea580c" strokeWidth="2" className="animate-pulse" />
-              ) : (
-                <path d="M88 118 Q100 126 112 115" stroke="#7c2d12" strokeWidth="3" fill="none" strokeLinecap="round" />
-              )}
-            </svg>
-          </div>
-
-          {/* 3D Cyber Pedestal */}
-          <div className="w-52 h-4 rounded-full bg-gradient-to-r from-orange-500/0 via-orange-500/50 to-orange-500/0 blur-xs -mt-3" />
         </div>
 
         {/* 4. INTERACTIVE CHALLENGE / GAME INTERFACE */}
@@ -1396,7 +1248,7 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
                           'bg-emerald-600/30 border-emerald-400 text-emerald-200 shadow-lg shadow-emerald-500/20 ring-2 ring-emerald-500';
                       } else if (isSelected) {
                         btnStyle =
-                          'bg-red-600/30 border-red-500 text-red-200 shadow-lg shadow-red-500/20 ring-2 ring-red-500 animate-shake';
+                          'bg-red-600/30 border-red-500 text-red-200 shadow-lg shadow-red-500/20 ring-2 ring-red-500';
                       } else {
                         btnStyle = 'opacity-40 border-white/5 text-slate-400';
                       }
@@ -1570,3 +1422,5 @@ export default function SarcasticCoach({ apiKey, soundEnabled, onActivity }: Sar
     </div>
   );
 }
+
+

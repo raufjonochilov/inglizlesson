@@ -1,346 +1,146 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
+import { NEURAL_VOICES, splitSpeechSegments, escapeSpeechXml } from '@/lib/voice-text';
+import { synthesizeGeminiSpeech } from '@/lib/gemini-speech';
 
-// In-memory cache to ensure instant playback for repeated questions & sentences
-const audioCache = new Map<string, { buffer: Buffer; timestamp: number }>();
-const MAX_CACHE_SIZE = 120;
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+const cache = new Map<string, Buffer>();
+const pending = new Map<string, Promise<Buffer>>();
+const MAX_TEXT_LENGTH = 5000;
 
-// Helper to detect if text is predominantly Uzbek
-function isUzbekText(text: string): boolean {
-  const lower = text.toLowerCase();
-  const uzbekPatterns = [
-    /\b(salom|men|sen|siz|biz|u|ular|uchun|bilan|emas|haqida|savol|xato|to['’‘`]?g['’‘`]?ri|bo['’‘`]?ladi|qanday|nima|qani|ko['’‘`]?r|ayt|gapir|ingliz|o['’‘`]?zbek|lekin|agar|juda|kerak|dedingmi|voybooo|hahaha|qovurilding|ustoz|tuzoq|dars|kitob|javob|bilasanmi|aytganingdek|shunday|mayli|rahmat|yaxshi|yo['’‘`]?q|qoyil|hayratdaman|bilarkansan|o['’‘`]?rgandingmi|shafqat|aqlingni|ishlat)\b/i,
-    /[oOgG]['’‘`]/,
-    /\b(emasman|emasmi|ekan|ekansan|bo'lsa|bo'lgan|qilmoq|qiladi|beradi|oladi|ber-chi|top-chi|tushuntir)\b/i,
-  ];
-
-  for (const pattern of uzbekPatterns) {
-    if (pattern.test(lower)) return true;
-  }
-  return false;
-}
-
-// Select optimal neural voice based on language and preferences (Male voices only)
-function resolveVoice(lang: string, voiceParam: string | null, isUzbek: boolean): string {
-  if (voiceParam) {
-    if (voiceParam === 'buster' || voiceParam === 'uz-sardor' || voiceParam === 'uz-UZ-SardorNeural') {
-      return 'uz-UZ-SardorNeural';
-    }
-    if (voiceParam === 'en-guy' || voiceParam === 'en-US-GuyNeural') return 'en-US-GuyNeural';
-    if (voiceParam === 'en-ryan' || voiceParam === 'en-GB-RyanNeural') return 'en-GB-RyanNeural';
-    // Default any other request to Sardor for Uzbek, Guy for English
-    return isUzbek ? 'uz-UZ-SardorNeural' : 'en-US-GuyNeural';
-  }
-
-  if (isUzbek || lang.startsWith('uz')) {
-    // Default to SardorNeural (rich natural authoritative male voice for Professor Buster)
-    return 'uz-UZ-SardorNeural';
-  }
-
-  if (lang.startsWith('en-GB')) {
-    return 'en-GB-RyanNeural';
-  }
-
-  return 'en-US-GuyNeural';
-}
-
-// Prepare and polish Uzbek and English text for crystal-clear neural pronunciation
-function normalizeTtsText(raw: string, isUzbek: boolean): string {
-  let text = raw
-    // Strip mood tags like [MOOD: roasting] or [MOOD: smirking]
-    .replace(/\[MOOD:\s*\w+\]/gi, '')
-    // Strip markdown formatting
-    .replace(/[*_#`~[\]]/g, ' ')
-    // Normalize curly quotes and backticks to standard single quote for Uzbek words (o', g')
-    .replace(/[\u2018\u2019\u02BB\u02BC\u0060\u00B4]/g, "'")
-    // Strip emojis (surrogate pairs and symbols) which cause TTS glitches
-    .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]/g, '')
-    // Replace multiple punctuation marks with a single one
-    .replace(/!{2,}/g, '!')
-    .replace(/\?{2,}/g, '?')
-    .replace(/\.{2,}/g, '.')
-    // Clean excessive spaces
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Natural pause formatting for Uzbek humorous interjections
-  if (isUzbek) {
-    text = text
-      .replace(/\b(Voybooo|Hahaha|Aha|Qoyil|Iya|Tavba)\s*!/gi, '$1,')
-      .replace(/\b(dedingmi|ayt-chi|qani)\s*!/gi, '$1?');
-  }
-
-  return text.slice(0, 950);
-}
-
-// Helper to determine if a string segment is a substantial English phrase/sentence (>= 2 words)
-function isEnglishPhrase(str: string): boolean {
-  const clean = str.trim();
-  if (!clean || clean.length < 3) return false;
-
-  // Uzbek markers
-  const uzbekPattern = /[oOgG]['’‘`]|(emas|bilan|haqida|uchun|dedingmi|topding|bo'ladi|ekan|qaychi|gap|so'z|ayt|ko'r|kerak|yaxshi|xato|to'g'ri|dars|maktab|abituriyent|tavba|voybooo|hahaha|emish|qo'shil|turmush)/i;
-  if (uzbekPattern.test(clean)) return false;
-
-  const words = clean.split(/\s+/).filter(Boolean);
-  // Only switch to English voice for full sentences or phrases of 2 or more words
-  // Single words (like 'to', 'with', 'meet', 'is', 'for') are pronounced naturally by Sardor Neural in flow
-  if (words.length < 2) return false;
-
-  const englishWords = /\b(i|am|you|he|she|it|we|they|agree|married|with|to|call|this|in|english|feel|good|myself|turn|switch|on|off|light|congratulate|birthday|hair|cut|had|have|normal|bad|look|forward|meeting|meet|explained|explain|rule|me|for|at|the|a|an|is|are|was|were|do|does|did|not|can|could|would|should|how|what|why|when|where|open|close|make|start|stop|as|usually|norm|seen|been|nice|pretty|fine|so|very|that|which|who)\b/i;
-  return englishWords.test(clean);
-}
-
-// Check if entire text is purely English
-function isPureEnglishText(text: string): boolean {
-  const clean = text.trim();
-  if (!clean) return false;
-  const uzbekWords = /\b(salom|men|sen|siz|biz|u|ular|uchun|bilan|emas|haqida|savol|xato|to['’‘`]?g['’‘`]?ri|bo['’‘`]?ladi|qanday|nima|qani|ko['’‘`]?r|ayt|gapir|o['’‘`]?zbek|lekin|agar|juda|kerak|dedingmi|voybooo|hahaha|qovurilding|ustoz|tuzoq|dars|kitob|javob|bilasanmi|aytganingdek|shunday|mayli|rahmat|yaxshi|yo['’‘`]?q|qoyil|hayratdaman|bilarkansan|o['’‘`]?rgandingmi|shafqat|aqlingni|ishlat)\b/i;
-  if (uzbekWords.test(clean)) return false;
-  if (/[oOgG]['’‘`]/.test(clean)) return false;
-
-  return isEnglishPhrase(clean);
-}
-
-// Parse mixed text into bilingual segments: [{ text, lang: 'uz' | 'en' }]
-function parseBilingualSegments(rawText: string): { text: string; lang: 'uz' | 'en' }[] {
-  const text = rawText.trim();
-  if (!text) return [];
-
-  // 1. If text is pure English
-  if (isPureEnglishText(text)) {
-    return [{ text, lang: 'en' }];
-  }
-
-  const segments: { text: string; lang: 'uz' | 'en' }[] = [];
-  // Match quoted strings where quotes are bounded by whitespace/punctuation (avoiding internal apostrophes like o'zbek, fe'l)
-  const quoteRegex = /(?:^|[\s([{\.,:;!?])(['"“‘`])([A-Za-z0-9\s,\.!\?\-\/]+?)(['"”’`])(?=$|[\s)\]}\.,:;!?])/g;
-
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = quoteRegex.exec(text)) !== null) {
-    const matchedFull = match[0];
-    const leadingChar = matchedFull.charAt(0);
-    const hasLead = /[\s([{\.,:;!?]/.test(leadingChar);
-    const contentStartIndex = match.index + (hasLead ? 1 : 0);
-    const quoteContent = match[2].trim();
-
-    if (contentStartIndex > lastIndex) {
-      const beforeText = text.slice(lastIndex, contentStartIndex).trim();
-      if (beforeText) {
-        segments.push({ text: beforeText, lang: 'uz' });
-      }
-    }
-
-    if (isEnglishPhrase(quoteContent)) {
-      segments.push({ text: quoteContent, lang: 'en' });
-    } else {
-      segments.push({ text: quoteContent, lang: 'uz' });
-    }
-
-    lastIndex = match.index + matchedFull.length;
-  }
-
-  if (lastIndex < text.length) {
-    const remaining = text.slice(lastIndex).trim();
-    if (remaining) {
-      segments.push({ text: remaining, lang: 'uz' });
-    }
-  }
-
-  if (segments.length === 0) {
-    segments.push({ text, lang: isPureEnglishText(text) ? 'en' : 'uz' });
-  }
-
-  // Merge consecutive segments of the same language
-  const merged: { text: string; lang: 'uz' | 'en' }[] = [];
-  for (const seg of segments) {
-    if (!seg.text) continue;
-    if (merged.length > 0 && merged[merged.length - 1].lang === seg.lang) {
-      merged[merged.length - 1].text += ' ' + seg.text;
-    } else {
-      merged.push({ ...seg });
-    }
-  }
-
-  // If there are still more than 3 segments, keep whole text in Sardor Neural to avoid excessive network overhead
-  if (merged.length > 3) {
-    return [{ text, lang: 'uz' }];
-  }
-
-  return merged;
-}
-
-// Synthesize a single chunk with specific voice and prosody
-async function synthesizeChunk(
-  tts: MsEdgeTTS,
-  voice: string,
-  chunkText: string
-): Promise<Buffer> {
-  await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
-  const prosodyOptions = voice.startsWith('uz-')
-    ? { rate: '-2%', pitch: '+0Hz' }
-    : { rate: 'default', pitch: '+0Hz' };
-
-  return new Promise<Buffer>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('TTS generation timed out'));
-    }, 10000);
-
-    try {
-      const { audioStream } = tts.toStream(chunkText, prosodyOptions);
-      const chunks: Buffer[] = [];
-
-      audioStream.on('data', (c: Buffer) => chunks.push(c));
-      audioStream.on('end', () => {
-        clearTimeout(timeout);
-        resolve(Buffer.concat(chunks));
-      });
-      audioStream.on('error', (err: any) => {
-        clearTimeout(timeout);
-        reject(err);
-      });
-    } catch (streamErr) {
-      clearTimeout(timeout);
-      reject(streamErr);
-    }
-  });
-}
-
-export async function GET(req: NextRequest) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const text = searchParams.get('text');
-    const rawLang = searchParams.get('lang') || '';
-    const voiceParam = searchParams.get('voice');
-
-    if (!text || !text.trim()) {
-      return NextResponse.json({ error: 'Matn kiritilmadi' }, { status: 400 });
-    }
-
-    const isBuster = voiceParam === 'buster' || voiceParam === 'uz-UZ-SardorNeural' || voiceParam === 'uz-sardor';
-    const isUzbek = isBuster || rawLang.startsWith('uz') || isUzbekText(text);
-    const cleanText = normalizeTtsText(text, isUzbek);
-
-    if (!cleanText) {
-      return NextResponse.json({ error: 'Tozalangan matn bo‘sh' }, { status: 400 });
-    }
-
-    // Determine segments for bilingual Buster or general speech
-    let segments: { text: string; lang: 'uz' | 'en' }[] = [];
-    if (isBuster || isUzbek) {
-      segments = parseBilingualSegments(cleanText);
-    } else {
-      segments = [{ text: cleanText, lang: 'en' }];
-    }
-
-    const hasEnglishSegment = segments.some((s) => s.lang === 'en');
-    const effectiveVoice = isBuster || isUzbek
-      ? hasEnglishSegment
-        ? 'buster-bilingual'
-        : 'uz-UZ-SardorNeural'
-      : resolveVoice(rawLang, voiceParam, false);
-
-    // Cache key incorporates voice and text
-    const cacheKey = `${effectiveVoice}::${cleanText}`;
-    if (audioCache.has(cacheKey)) {
-      const cached = audioCache.get(cacheKey)!;
-      return new NextResponse(new Uint8Array(cached.buffer), {
-        status: 200,
-        headers: {
-          'Content-Type': 'audio/mpeg',
-          'Cache-Control': 'public, max-age=86400, s-maxage=86400',
-          'X-TTS-Source': 'cache',
-          'X-TTS-Voice': effectiveVoice,
-        },
-      });
-    }
-
-    // Attempt 1: High-Fidelity Microsoft Neural TTS with bilingual switching for English phrases
-    const tts = new MsEdgeTTS();
-    const buffers: Buffer[] = [];
-
-    for (const seg of segments) {
-      const segVoice = seg.lang === 'en'
-        ? 'en-US-GuyNeural'
-        : (isUzbek ? 'uz-UZ-SardorNeural' : effectiveVoice);
-
-      let buf: Buffer | null = null;
-      try {
-        buf = await synthesizeChunk(tts, segVoice, seg.text);
-      } catch (firstErr) {
-        console.warn(`Attempt 1 failed for "${seg.text.slice(0, 30)}", retrying once...`, firstErr);
-        try {
-          buf = await synthesizeChunk(tts, segVoice, seg.text);
-        } catch (retryErr) {
-          console.warn(`Attempt 2 failed for "${seg.text.slice(0, 30)}":`, retryErr);
-        }
-      }
-
-      if (buf && buf.length > 0) {
-        buffers.push(buf);
-      }
-    }
-
-    const audioBuffer = buffers.length > 0 ? Buffer.concat(buffers) : null;
-
-    if (audioBuffer && audioBuffer.length > 0) {
-      // Save to cache
-      if (audioCache.size >= MAX_CACHE_SIZE) {
-        const firstKey = audioCache.keys().next().value;
-        if (firstKey) audioCache.delete(firstKey);
-      }
-      audioCache.set(cacheKey, { buffer: audioBuffer, timestamp: Date.now() });
-
-      return new NextResponse(new Uint8Array(audioBuffer), {
-        status: 200,
-        headers: {
-          'Content-Type': 'audio/mpeg',
-          'Cache-Control': 'public, max-age=86400, s-maxage=86400',
-          'X-TTS-Voice': effectiveVoice,
-          'X-TTS-Source': 'edge-neural',
-        },
-      });
-    }
-
-    // For Professor Buster or Uzbek, do not return female Turkish fallback audio
-    if (isBuster || isUzbek) {
-      return NextResponse.json(
-        { error: 'Professor Buster ovozini generatsiya qilishda xatolik yuz berdi' },
-        { status: 502 }
-      );
-    }
-
-    // Attempt 2: Fallback to Google TTS (for English only)
-    const fallbackLang = rawLang || 'en-US';
-    const shortChunk = cleanText.slice(0, 180);
-    const googleTtsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${encodeURIComponent(
-      fallbackLang
-    )}&client=tw-ob&q=${encodeURIComponent(shortChunk)}`;
-
-    const response = await fetch(googleTtsUrl, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
+async function synthesize(text: string, voice: string, rate: number, pitch: number): Promise<Buffer> {
+  const key = process.env.AZURE_SPEECH_KEY;
+  const region = process.env.AZURE_SPEECH_REGION;
+  if (key && region) {
+    if (!/^[a-z0-9]+$/.test(region)) throw new Error('Invalid Azure Speech region');
+    const locale = voice.split('-').slice(0, 2).join('-');
+    const response = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
+      method: 'POST', signal: AbortSignal.timeout(15000),
+      headers: { 'Ocp-Apim-Subscription-Key': key, 'Content-Type': 'application/ssml+xml',
+        'X-Microsoft-OutputFormat': 'audio-24khz-96kbitrate-mono-mp3', 'User-Agent': 'LinguaPulseAI' },
+      body: `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="${locale}"><voice name="${voice}"><prosody rate="${Math.round((rate - 1) * 100)}%" pitch="${Math.round((pitch - 1) * 20)}Hz">${escapeSpeechXml(text)}</prosody></voice></speak>`,
     });
-
-    if (response.ok) {
-      const arrayBuffer = await response.arrayBuffer();
-      return new NextResponse(arrayBuffer, {
-        status: 200,
-        headers: {
-          'Content-Type': 'audio/mpeg',
-          'Cache-Control': 'public, max-age=86400, s-maxage=86400',
-          'X-TTS-Source': 'fallback',
-        },
-      });
-    }
-
-    return NextResponse.json({ error: 'TTS audio olish imkoni bo‘lmadi' }, { status: 502 });
-  } catch (err: any) {
-    console.error('TTS API internal error:', err);
-    return NextResponse.json({ error: 'TTS server xatosi' }, { status: 500 });
+    if (!response.ok) throw new Error(`Azure Speech ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length) throw new Error('Empty Azure audio');
+    return buffer;
   }
+  const tts = new MsEdgeTTS({ connectionTimeoutMs: 7000, synthesisTimeoutMs: 12000 });
+  try {
+    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
+    return await new Promise<Buffer>((resolve, reject) => {
+      const timer = setTimeout(() => { reject(new Error('Speech timed out')); tts.close(); }, 15000);
+      const { audioStream } = tts.toStream(escapeSpeechXml(text), {
+        rate: (rate >= 1 ? '+' : '') + Math.round((rate - 1) * 100) + '%',
+        pitch: (pitch >= 1 ? '+' : '') + Math.round((pitch - 1) * 20) + 'Hz',
+      });
+      const chunks: Buffer[] = [];
+      audioStream.on('data', (chunk: Buffer) => chunks.push(chunk));
+      audioStream.once('end', () => { clearTimeout(timer); const data = Buffer.concat(chunks); data.length ? resolve(data) : reject(new Error('Empty audio')); });
+      audioStream.once('error', error => { clearTimeout(timer); reject(error); });
+    });
+  } finally { tts.close(); }
+}
+
+async function handleSpeech(params: Record<string, unknown>) {
+  const { text } = params;
+  if (typeof text !== 'string' || !text.trim()) return NextResponse.json({ error: 'Matn kiriting.' }, { status: 400 });
+  if (text.length > MAX_TEXT_LENGTH) return NextResponse.json({ error: 'Matn 5000 belgidan oshmasin.' }, { status: 413 });
+  const buster = ['buster', 'uz-sardor', 'uz-UZ-SardorNeural'].includes(String(params.voice));
+  const explicitVoice = Object.values(NEURAL_VOICES).flatMap(v => Object.values(v)).find(v => v === params.voice);
+  const accent = String(params.accent || (String(params.lang).startsWith('en') ? params.lang : 'en-US'));
+  const englishAccent = accent in NEURAL_VOICES && accent !== 'uz-UZ' ? accent as keyof typeof NEURAL_VOICES : 'en-US';
+  const gender = params.gender === 'female' && !buster ? 'female' : 'male';
+  const rate = Math.min(1.3, Math.max(0.7, Number(params.rate) || 1));
+  const uzbekRate = Math.min(1.15, Math.max(0.8, Number(params.uzbekRate) || 0.95));
+  const pitch = Math.min(1.3, Math.max(0.7, Number(params.pitch) || 1));
+  let provider = params.provider || 'microsoft';
+  if (provider === 'local') {
+    // Navoiy specializes in Uzbek; keep native English on its dedicated voice.
+    if (String(params.lang).startsWith('en') && !buster) {
+      provider = 'microsoft';
+    } else {
+      try {
+        const response = await fetch('http://127.0.0.1:8765/tts', {
+          method: 'POST', signal: AbortSignal.timeout(90000),
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, speed: uzbekRate }),
+        });
+        if (!response.ok) throw new Error(`Local TTS ${response.status}`);
+        const buffer = Buffer.from(await response.arrayBuffer());
+        if (buffer.length <= 44 || buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') {
+          throw new Error('Invalid local audio');
+        }
+        return new NextResponse(new Uint8Array(buffer), { headers: {
+          'Content-Type': 'audio/wav', 'Cache-Control': 'private, max-age=3600',
+          'X-TTS-Source': 'navoiy-local', 'X-TTS-Voice': 'Navoiy',
+        } });
+      } catch {
+        return NextResponse.json({ error: 'Mahalliy ovoz xizmati ishlamayapti. Ovoz serverini ishga tushiring.' }, { status: 503 });
+      }
+    }
+  }
+  let usedFallback = false;
+  if (provider === 'gemini') {
+    try {
+      const audio = await synthesizeGeminiSpeech({ text, lang: buster ? 'uz-mixed' : String(params.lang || 'auto'),
+        accent, gender, rate, uzbekRate });
+      return new NextResponse(new Uint8Array(audio.buffer), { headers: {
+        'Content-Type': 'audio/wav', 'Cache-Control': 'private, max-age=3600',
+        'X-TTS-Source': 'gemini', 'X-TTS-Voice': audio.voice,
+      } });
+    } catch (error) {
+      console.error('Gemini speech unavailable:', error instanceof Error ? error.message : 'Unknown error');
+      usedFallback = true;
+    }
+  }
+  if (provider !== 'microsoft' && !usedFallback) return NextResponse.json({ error: 'Noma’lum ovoz bazasi.' }, { status: 400 });
+  const lang = buster || params.lang === 'uz-mixed' ? 'uz-mixed'
+    : String(params.lang).startsWith('uz') ? 'uz'
+    : String(params.lang).startsWith('en') ? 'en' : 'auto';
+  const segments = splitSpeechSegments(text, lang);
+  if (!segments.length) return NextResponse.json({ error: 'O‘qiladigan matn topilmadi.' }, { status: 400 });
+  const plan = segments.map(segment => ({ ...segment,
+    rate: segment.lang === 'uz' ? uzbekRate : rate,
+    pitch: segment.lang === 'uz' ? 1 : pitch,
+    voice: segment.lang === 'uz'
+    ? (explicitVoice?.startsWith('uz') ? explicitVoice : NEURAL_VOICES['uz-UZ'][gender])
+    : (explicitVoice?.startsWith('en') ? explicitVoice : NEURAL_VOICES[englishAccent][gender]) }));
+  const key = JSON.stringify({ plan, rate, pitch });
+  try {
+    let audio = cache.get(key);
+    if (!audio) {
+      let request = pending.get(key);
+      if (!request) {
+        request = (async () => {
+          const buffers: Buffer[] = [];
+          // Bounded concurrency keeps mixed speech responsive and preserves order.
+          for (let index = 0; index < plan.length; index += 3) {
+            buffers.push(...await Promise.all(plan.slice(index, index + 3).map(segment => synthesize(segment.text, segment.voice, segment.rate, segment.pitch))));
+          }
+          const result = Buffer.concat(buffers);
+          if (cache.size >= 60) cache.delete(cache.keys().next().value!);
+          cache.set(key, result);
+          return result;
+        })();
+        pending.set(key, request);
+        request.finally(() => pending.delete(key)).catch(() => {});
+      }
+      audio = await request;
+    }
+    return new NextResponse(new Uint8Array(audio), { headers: {
+      'Content-Type': 'audio/mpeg', 'Cache-Control': 'private, max-age=3600',
+      'X-TTS-Source': 'microsoft-neural', 'X-TTS-Voice': [...new Set(plan.map(s => s.voice))].join(','),
+      ...(usedFallback ? { 'X-TTS-Fallback': 'gemini-unavailable' } : {}),
+    } });
+  } catch (error) {
+    console.error('Neural speech unavailable:', error instanceof Error ? error.message : 'Unknown error');
+    return NextResponse.json({ error: 'Ovoz xizmati bilan bog‘lanib bo‘lmadi. Qayta urinib ko‘ring.' }, { status: 502 });
+  }
+}
+export async function GET(req: NextRequest) { return handleSpeech(Object.fromEntries(new URL(req.url).searchParams)); }
+export async function POST(req: NextRequest) {
+  try { return await handleSpeech(await req.json()); }
+  catch { return NextResponse.json({ error: 'So‘rov formati noto‘g‘ri.' }, { status: 400 }); }
 }

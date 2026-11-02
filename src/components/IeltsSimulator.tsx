@@ -44,6 +44,7 @@ export default function IeltsSimulator({ apiKey, soundEnabled, onActivity }: Iel
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [transcript, setTranscript] = useState('');
   const [isRecording, setIsRecording] = useState(false);
+  const [assessmentError, setAssessmentError] = useState('');
   const [isEvaluating, setIsEvaluating] = useState(false);
   const [evaluation, setEvaluation] = useState<IeltsEvaluation | null>(null);
 
@@ -137,6 +138,8 @@ export default function IeltsSimulator({ apiKey, soundEnabled, onActivity }: Iel
 
     if (soundEnabled) SoundFX.playClick();
     setIsEvaluating(true);
+    setAssessmentError('');
+    setEvaluation(null);
     onActivity();
 
     const activeQ =
@@ -154,12 +157,14 @@ export default function IeltsSimulator({ apiKey, soundEnabled, onActivity }: Iel
       });
 
       const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Baholash bajarilmadi');
       if (!data.error) {
         setEvaluation(data);
         if (soundEnabled) SoundFX.playSuccess();
       }
     } catch (e) {
       console.error('Evaluation error:', e);
+      setAssessmentError(e instanceof Error ? e.message : 'Server bilan bog‘lanib bo‘lmadi. Qayta urinib ko‘ring.');
     } finally {
       setIsEvaluating(false);
     }
@@ -375,6 +380,7 @@ export default function IeltsSimulator({ apiKey, soundEnabled, onActivity }: Iel
       </div>
 
       {/* IELTS Evaluation Report Card */}
+      {assessmentError && <p role="alert" className="text-red-500 p-3">{assessmentError}</p>}
       {evaluation && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl space-y-6 animate-fade-in">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-100 dark:border-slate-800">

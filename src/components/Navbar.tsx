@@ -78,12 +78,16 @@ export default function Navbar({
   });
   const [availableVoices, setAvailableVoices] = useState<{ name: string; lang: string; isNatural: boolean }[]>([]);
   const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const [previewError, setPreviewError] = useState('');
 
   useEffect(() => {
     setVoiceConfig(getVoiceConfig());
   }, []);
 
   const openVoiceSettings = () => {
+    stopSpeaking();
+    setIsPreviewPlaying(false);
+    setPreviewError('');
     setVoiceConfig(getVoiceConfig());
     setAvailableVoices(getAvailableBrowserVoices());
     setShowVoiceModal(true);
@@ -176,18 +180,23 @@ const navItems: NavItem[] = [
   const handleSaveVoiceConfig = () => {
     saveVoiceConfig(voiceConfig);
     setShowVoiceModal(false);
+    setIsPreviewPlaying(false);
     stopSpeaking();
     if (soundEnabled) SoundFX.playSuccess();
   };
 
   const handlePreview = () => {
+    if (isPreviewPlaying) { stopSpeaking(); setIsPreviewPlaying(false); return; }
+    setPreviewError('');
     setIsPreviewPlaying(true);
     const sample =
       voiceConfig.accent === 'uz-UZ'
-        ? "Salom! Men Professor Busterman. LinguaPulse AI bilan o'zbekcha talaffuz endi 100% tiniq va tabiiy!"
+        ? "Salom! Bugun ingliz tilini birga o‘rganamiz. Shoshilmang, har bir so‘zni diqqat bilan tinglang."
         : 'Hello! Welcome to LinguaPulse AI. Practice speaking fluently every single day.';
-    previewVoice(voiceConfig, sample);
-    setTimeout(() => setIsPreviewPlaying(false), 3800);
+    previewVoice(voiceConfig, sample, {
+      onEnd: () => setIsPreviewPlaying(false),
+      onError: () => { setIsPreviewPlaying(false); setPreviewError('Ovoz yuklanmadi. Qayta urinib ko‘ring.'); },
+    });
   };
 
   const renderNavButton = (item: NavItem) => {
@@ -222,170 +231,18 @@ const navItems: NavItem[] = [
 
   return (
     <>
-      {/* Floating 3D Island Navigation Dock */}
-      <header className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-[96%] max-w-7xl transition-all duration-300">
-        <div className="glass-dock rounded-3xl p-2 sm:px-4 sm:py-2.5 flex items-center justify-between gap-2 shadow-2xl border border-white/20">
-          {/* 3D Kinetic Brand Logo & All-Modules Button */}
-          <div className="flex items-center gap-2">
-            <Logo3D size="sm" onClick={() => handleTabClick('lessons')} />
-
-            {/* Quick Hub / Sitemap Button */}
-            <button
-              onClick={() => {
-                setShowHubModal(true);
-                if (soundEnabled) SoundFX.playClick();
-              }}
-              title="Barcha bo‘limlar menyusi (Hub)"
-              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs font-bold transition hover:scale-105"
-            >
-              <LayoutGrid className="w-3.5 h-3.5 text-indigo-400" />
-              <span className="hidden xl:inline">Bo‘limlar</span>
-            </button>
-          </div>
-
-          {/* Central 3D Flying Menu Tabs (Grouped & Ordered for Desktop) */}
-          <nav className="hidden lg:flex items-center gap-1 bg-slate-950/60 p-1.5 rounded-2xl border border-white/10 shadow-inner">
-            {/* Guruh 1: O'rganish (Darslar, Grammatika, Lug'at) */}
-            <div className="flex items-center gap-0.5">
-              {navItems.filter((i) => i.group === 'learn').map(renderNavButton)}
-            </div>
-
-            {/* Section Divider */}
-            <div className="h-5 w-[1px] bg-white/15 mx-1" />
-
-            {/* Guruh 2: AI Amaliyot (AI Repetitor, Kinoyachi AI, Talaffuz) */}
-            <div className="flex items-center gap-0.5">
-              {navItems.filter((i) => i.group === 'ai').map(renderNavButton)}
-            </div>
-
-            {/* Section Divider */}
-            <div className="h-5 w-[1px] bg-white/15 mx-1" />
-
-            {/* Guruh 3: Imtihon (IELTS 9) */}
-            <div className="flex items-center gap-0.5">
-              {navItems.filter((i) => i.group === 'exam').map(renderNavButton)}
-            </div>
-          </nav>
-
-          {/* Right Floating Quick Action Pills */}
-          <div className="flex items-center gap-1.5 sm:gap-2 pr-1">
-            {/* Streak Counter with 3D Fire Pill */}
-            <div
-              title={`${streak} kunlik dars zanjiri!`}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-500/40 rounded-2xl text-amber-300 text-xs font-black shadow-inner shadow-amber-500/20 hover:scale-105 transition"
-            >
-              <Flame className="w-4 h-4 text-amber-400 animate-bounce" />
-              <span>{streak} kun</span>
-            </div>
-
-            {/* Voice Settings Button (Tiniq Ovoz Sozlamalari) */}
-            <button
-              onClick={openVoiceSettings}
-              title="Tiniq Ovoz & Talaffuz Sozlamalari (Voice Settings)"
-              className="p-2.5 rounded-2xl bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-400/40 text-indigo-300 hover:text-white transition shadow-sm hover:scale-105 flex items-center gap-1"
-            >
-              <Sliders className="w-4 h-4 text-indigo-400" />
-            </button>
-
-            {/* Sound FX Toggle */}
-            <button
-              onClick={() => {
-                const nextVal = !soundEnabled;
-                setSoundEnabled(nextVal);
-                if (nextVal) SoundFX.playChime();
-              }}
-              title={soundEnabled ? "Ovoz effektlarini o'chirish" : "Ovoz effektlarini yoqish"}
-              className="p-2.5 rounded-2xl bg-slate-800/80 hover:bg-slate-700/80 border border-white/10 text-slate-300 hover:text-white transition shadow-sm hover:scale-105"
-            >
-              {soundEnabled ? (
-                <Volume2 className="w-4 h-4 text-indigo-400" />
-              ) : (
-                <VolumeX className="w-4 h-4 text-slate-500" />
-              )}
-            </button>
-
-            {/* API Key Modal Button */}
-            <button
-              onClick={() => setShowKeyModal(true)}
-              title="Google Gemini AI kalit sozlamalari"
-              className={`p-2.5 rounded-2xl border transition shadow-sm hover:scale-105 ${
-                apiKey
-                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
-                  : 'bg-slate-800/80 border-white/10 text-slate-400 hover:text-white'
-              }`}
-            >
-              <Key className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Mobile & Tablet Segmented Navigation Bar */}
-        <div className="lg:hidden mt-2 space-y-1.5">
-          {/* Category Filter Chips & Quick Hub Button */}
-          <div className="flex items-center justify-between gap-1 px-1">
-            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
-              {navGroups.map((g) => {
-                const isSelected = mobileCategory === g.key;
-                return (
-                  <button
-                    key={g.key}
-                    onClick={() => {
-                      setMobileCategory(g.key);
-                      if (soundEnabled) SoundFX.playClick();
-                    }}
-                    className={`px-2.5 py-1 rounded-xl text-[10px] font-black whitespace-nowrap transition border ${
-                      isSelected
-                        ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white border-indigo-400/50 shadow-sm'
-                        : 'bg-black/40 border-white/5 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    <span>{g.icon} {g.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-
-            <button
-              onClick={() => setShowHubModal(true)}
-              className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white border border-white/10 text-xs shrink-0 flex items-center gap-1"
-              title="Barcha bo‘limlar xaritasi"
-            >
-              <LayoutGrid className="w-3.5 h-3.5 text-indigo-400" />
-            </button>
-          </div>
-
-          {/* Nav Items Horizontal Row */}
-          <div className="flex overflow-x-auto py-1 gap-1.5 no-scrollbar px-1">
-            {navItems
-              .filter((item) => mobileCategory === 'all' || item.group === mobileCategory)
-              .map((item) => {
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => handleTabClick(item.id)}
-                    className={`flex items-center gap-1.5 whitespace-nowrap px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-md ${
-                      isActive
-                        ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white border border-indigo-400/40 shadow-indigo-500/30'
-                        : 'glass-panel text-slate-300 hover:text-white'
-                    }`}
-                  >
-                    <span className={isActive ? 'animate-bounce' : ''}>{item.icon}</span>
-                    <span>{item.label}</span>
-                    {item.badge && (
-                      <span className="text-[9px] font-extrabold px-1.5 py-0.2 rounded-full bg-white/15 text-white">
-                        {item.badge}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-          </div>
-        </div>
-      </header>
-
-      {/* Spacer so content doesn't get hidden behind floating header */}
-      <div className="h-28 sm:h-28 lg:h-24" />
+      <aside className="studio-sidebar">
+        <button className="studio-brand" onClick={() => handleTabClick('lessons')} aria-label="LinguaPulse bosh sahifa"><span className="brand-symbol"><Headphones size={24}/></span><span>lingua<span className="text-emerald-300">pulse</span><small>YOUR ENGLISH, UNLOCKED</small></span></button>
+        <div className="sidebar-caption">O‘QUV MAYDONI</div>
+        <nav aria-label="Asosiy menyu" className="space-y-1">
+          {([{id:'learn',label:'BILIM VA KO‘NIKMA'},{id:'ai',label:'AI BILAN AMALIYOT'},{id:'exam',label:'KATTA MAQSAD'}] as const).map(group=><div className="navigation-group" key={group.id}><span className="navigation-group-label">{group.label}</span>{navItems.filter(item=>item.group===group.id).map(item=><button key={item.id} onClick={()=>handleTabClick(item.id)} aria-current={activeTab===item.id?'page':undefined} className={`sidebar-link ${activeTab===item.id?'is-active':''}`}><span>{item.icon}</span><span>{item.label}</span>{item.id==='speaking'&&<small>AI</small>}</button>)}</div>)}
+        </nav>
+        <div className="sidebar-coach"><span className="text-emerald-300"><Sparkles size={22}/></span><h3>Har kuni bir qadam.</h3><p>Kichik mashqlar. Katta o‘zgarishlar. Bugun inglizcha gapirishga vaqt ajrating.</p><button onClick={() => handleTabClick('speaking')}>Suhbatni boshlash <Mic size={14}/></button></div>
+        <div className="mt-auto space-y-1 pt-6"><button className="sidebar-link" onClick={openVoiceSettings}><Sliders size={18}/>Ovoz sozlamalari</button><button className="sidebar-link" onClick={() => { setTempKey(apiKey); setShowKeyModal(true); }}><Key size={18}/>AI ulanishi<span className={apiKey ? 'connection-dot connected' : 'connection-dot'}/></button></div>
+        <div className="sidebar-profile"><span>O‘</span><div><strong>O‘rganuvchi</strong><small>Shaxsiy o‘quv makoni</small></div><button onClick={() => setSoundEnabled(!soundEnabled)} aria-label={soundEnabled ? 'Effektlarni o‘chirish' : 'Effektlarni yoqish'}>{soundEnabled ? <Volume2 size={17}/> : <VolumeX size={17}/>}</button></div>
+      </aside>
+      <header className="studio-topbar"><div><span className="text-slate-500">Mening makonim</span><span className="mx-3 text-slate-600">/</span><strong>{navItems.find(item => item.id === activeTab)?.label}</strong></div><div className="flex items-center gap-3"><span className="streak-pill"><Flame size={15}/>{streak} kunlik seriya</span><button onClick={openVoiceSettings} className="topbar-voice" aria-label="Ovoz sozlamalari"><Headphones size={17}/><span>Ovoz studiyasi</span></button><span className="profile-avatar">O‘</span></div></header>
+      <nav className="studio-mobile-nav" aria-label="Mobil menyu">{navItems.map(item => <button key={item.id} onClick={() => handleTabClick(item.id)} aria-current={activeTab === item.id ? 'page' : undefined} className={activeTab === item.id ? 'is-active' : ''}>{item.icon}<span>{item.label}</span></button>)}</nav>
 
       {/* VOICE SETTINGS MODAL (TINIQ OVOZ SOZLAMALARI) */}
       {showVoiceModal && (
@@ -439,7 +296,7 @@ const navItems: NavItem[] = [
                     </span>
                   </div>
                   <p className="text-[11px] mt-1.5 opacity-90 leading-snug">
-                    Google Cloud Neural studio talaffuzi. Tabiiy, yumshoq va 100% tiniq inson ovozi.
+                    Mahalliy Navoiy yoki Microsoft ovozi. O‘zbekcha va inglizcha nutq.
                   </p>
                 </button>
 
@@ -497,6 +354,9 @@ const navItems: NavItem[] = [
               </div>
             </div>
 
+            {voiceConfig.engine === 'hd-studio' && <label className="block text-xs text-slate-300">Ovoz bazasi<select aria-label="Ovoz bazasi" value={voiceConfig.provider || 'microsoft'} onChange={e => setVoiceConfig(prev => ({...prev, provider: e.target.value as 'local' | 'microsoft'}))} className="w-full mt-2 p-3 rounded-xl bg-slate-900 border border-white/10"><option value="local">Navoiy · Mahalliy o‘zbekcha</option><option value="microsoft">Microsoft · Sardor / Madina</option></select></label>}
+            {voiceConfig.engine === 'hd-studio' && <div className="space-y-2"><label className="text-xs text-slate-300">Spiker ovozi</label><select aria-label="Spiker ovozi" disabled={voiceConfig.provider === 'local'} value={voiceConfig.gender || 'male'} onChange={e => setVoiceConfig(prev => ({...prev, gender: e.target.value as 'male' | 'female'}))} className="w-full p-3 rounded-xl bg-slate-900 border border-white/10 text-xs"><option value="male">{voiceConfig.provider === 'local' ? 'Navoiy · Namuna ovozi' : 'Erkak · Sardor / Guy / Ryan / William'}</option><option value="female">{voiceConfig.provider === 'local' ? 'Navoiy · Namuna ovozi' : 'Ayol · Madina / Jenny / Sonia / Natasha'}</option></select></div>}
+            {previewError && <p role="alert" className="text-xs text-rose-300">{previewError}</p>}
             {/* 3. Specific Speaker Voice Dropdown (when Natural Browser engine selected) */}
             {voiceConfig.engine === 'browser-natural' && availableVoices.length > 0 && (
               <div className="space-y-1.5">
@@ -525,23 +385,23 @@ const navItems: NavItem[] = [
                   Nutq Tezligi (Speed):
                 </label>
                 <span className="text-xs font-mono font-bold text-indigo-400">
-                  {voiceConfig.speed.toFixed(2)}x
+                  {(voiceConfig.accent === 'uz-UZ' ? (voiceConfig.uzbekSpeed ?? 0.95) : voiceConfig.speed).toFixed(2)}x
                 </span>
               </div>
 
               <div className="grid grid-cols-4 gap-2">
                 {[
-                  { rate: 0.75, label: '🐢 Sekin (0.75x)' },
-                  { rate: 0.9, label: '👌 Qulay (0.90x)' },
+                  { rate: 0.85, label: 'Sekin (0.85x)' },
+                  { rate: 0.95, label: 'Tabiiy (0.95x)' },
                   { rate: 1.0, label: '⚡ Standart (1.0x)' },
                   { rate: 1.15, label: '🚀 Tez (1.15x)' },
                 ].map((s) => (
                   <button
                     key={s.rate}
                     type="button"
-                    onClick={() => setVoiceConfig((prev) => ({ ...prev, speed: s.rate }))}
+                    onClick={() => setVoiceConfig((prev) => ({ ...prev, ...(prev.accent === 'uz-UZ' ? { uzbekSpeed: s.rate } : { speed: s.rate }) }))}
                     className={`py-2 px-1.5 rounded-xl border text-[11px] font-bold text-center transition ${
-                      Math.abs(voiceConfig.speed - s.rate) < 0.05
+                      Math.abs((voiceConfig.accent === 'uz-UZ' ? (voiceConfig.uzbekSpeed ?? 0.95) : voiceConfig.speed) - s.rate) < 0.01
                         ? 'bg-indigo-600 text-white border-indigo-400 shadow-sm'
                         : 'bg-slate-900/60 border-white/10 text-slate-400 hover:text-white'
                     }`}
@@ -778,3 +638,4 @@ const navItems: NavItem[] = [
     </>
   );
 }
+

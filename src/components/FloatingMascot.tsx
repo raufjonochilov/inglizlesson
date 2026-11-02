@@ -63,7 +63,7 @@ export default function FloatingMascot({ soundEnabled, onOpenStage }: FloatingMa
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end select-none animate-fade-in pointer-events-auto">
+    <div className="fixed bottom-24 lg:bottom-5 right-5 z-40 flex flex-col items-end select-none animate-fade-in pointer-events-auto">
       {/* Comic Speech Bubble */}
       {bubbleText && (
         <div className="mb-2 max-w-[240px] p-3 rounded-2xl bg-slate-900/95 border border-orange-500/50 shadow-2xl text-xs text-slate-100 font-semibold relative animate-bounce backdrop-blur-md">

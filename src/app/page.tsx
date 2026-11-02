@@ -10,7 +10,8 @@ import IeltsSimulator from '@/components/IeltsSimulator';
 import VocabBuilder from '@/components/VocabBuilder';
 import PronunciationCoach from '@/components/PronunciationCoach';
 import SarcasticCoach from '@/components/SarcasticCoach';
-import FloatingMascot from '@/components/FloatingMascot';
+import MotionLayer from '@/components/MotionLayer';
+
 import { Lesson, COURSE_UNITS } from '@/lib/data/curriculum';
 
 export default function HomePage() {
@@ -88,7 +89,7 @@ export default function HomePage() {
 
   if (!mounted) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">
+      <div className="min-h-screen flex items-center justify-center bg-[#f4f7fc]">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
           <span className="text-sm font-semibold text-slate-500">LinguaPulse AI yuklanmoqda...</span>
@@ -98,7 +99,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="relative min-h-screen flex flex-col bg-slate-950 text-slate-100 selection:bg-indigo-500 selection:text-white cyber-grid overflow-hidden">
+    <div className="app-light relative min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-indigo-500 selection:text-white cyber-grid overflow-hidden">
       {/* Ambient 3D Glowing Atmospheric Orbs */}
       <div className="fixed top-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full bg-indigo-600/15 blur-[120px] pointer-events-none animate-pulse-glow" />
       <div className="fixed bottom-[-10%] right-[-10%] w-[600px] h-[600px] rounded-full bg-purple-600/15 blur-[140px] pointer-events-none animate-float-slow" />
@@ -109,6 +110,7 @@ export default function HomePage() {
         activeTab={activeTab}
         setActiveTab={(tab) => {
           setActiveTab(tab);
+          window.scrollTo({ top: 0, behavior: 'instant' });
           if (tab !== 'lessons') {
             setSelectedLesson(null);
           }
@@ -121,7 +123,8 @@ export default function HomePage() {
       />
 
       {/* Main Content View with 3D Depth */}
-      <main className="relative z-10 flex-1 w-full max-w-7xl mx-auto py-4 sm:py-6 px-3 sm:px-6">
+      <main className={`studio-main module-${activeTab} relative z-10 flex-1`}>
+        <div key={activeTab} className="module-entrance">
         {activeTab === 'lessons' && (
           selectedLesson ? (
             <InteractiveLessonPlayer
@@ -133,6 +136,7 @@ export default function HomePage() {
             />
           ) : (
             <CourseRoadmap
+              onNavigate={(tab) => { setActiveTab(tab); window.scrollTo({ top: 0, behavior: 'instant' }); }}
               completedLessonIds={completedLessonIds}
               onSelectLesson={(lesson) => setSelectedLesson(lesson)}
               soundEnabled={soundEnabled}
@@ -185,15 +189,12 @@ export default function HomePage() {
             onActivity={handleActivity}
           />
         )}
+        </div>
       </main>
-
-      {/* Floating 3D Mascot across the app */}
-      {activeTab !== 'sarcastic' && (
-        <FloatingMascot
-          soundEnabled={soundEnabled}
-          onOpenStage={() => setActiveTab('sarcastic')}
-        />
-      )}
+      <MotionLayer />
     </div>
   );
 }
+
+
+

@@ -227,6 +227,7 @@ export default function InteractiveLessonPlayer({
     setTeacherChat(newHistory);
     setStudentInput('');
     setIsTeacherLoading(true);
+    setTeacherPassed(false);
 
     try {
       const response = await fetch('/api/chat', {
@@ -239,6 +240,7 @@ export default function InteractiveLessonPlayer({
           })),
           persona: 'tutor',
           userLevel: lesson.level,
+          lessonId: lesson.id,
           apiKey,
         }),
       });
@@ -248,21 +250,22 @@ export default function InteractiveLessonPlayer({
         const replyText = data.reply as string;
         setTeacherChat((prev) => [...prev, { role: 'assistant', text: replyText }]);
         playCustomAudio(replyText);
-        setTeacherPassed(true);
-        if (soundEnabled) SoundFX.playSuccess();
+        setTeacherPassed(data.passed === true && !data.isFallback);
+        if (soundEnabled && data.passed === true) SoundFX.playSuccess();
       }
     } catch (e) {
       console.error(e);
-      const fallbackMsg = "Great effort! You clearly understood the grammar rule. You are ready to complete this lesson!";
+      const fallbackMsg = "Ustoz bilan bog‘lanib bo‘lmadi. Javobingiz baholanmadi. Qayta urinib ko‘ring.";
       setTeacherChat((prev) => [...prev, { role: 'assistant', text: fallbackMsg }]);
       playCustomAudio(fallbackMsg);
-      setTeacherPassed(true);
+      setTeacherPassed(false);
     } finally {
       setIsTeacherLoading(false);
     }
   };
 
   const handleFinishLesson = () => {
+    if (!teacherPassed) return;
     if (soundEnabled) SoundFX.playSuccess();
     onComplete(lesson.id);
     setCurrentStep('finished');
@@ -836,6 +839,7 @@ export default function InteractiveLessonPlayer({
           <div className="flex justify-end pt-4 border-t border-slate-100 dark:border-slate-800">
             <button
               onClick={handleFinishLesson}
+              disabled={!teacherPassed || isTeacherLoading}
               className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white rounded-2xl font-bold text-sm shadow-lg shadow-emerald-500/25 transition"
             >
               <Award className="w-5 h-5" />

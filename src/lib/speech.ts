@@ -107,368 +107,173 @@ export class SoundFX {
   }
 }
 
-// Voice Configuration Interface
+// Shared voice settings and cancellation-safe playback for every learning module.
+export { isUzbekText } from './voice-text';
+import { isUzbekText, normalizeSpeechText, splitSpeechSegments } from './voice-text';
 export interface VoiceConfig {
+  provider?: 'gemini' | 'microsoft' | 'local';
+  voiceSetupVersion?: number;
   engine: 'hd-studio' | 'browser-natural';
   accent: 'uz-UZ' | 'en-US' | 'en-GB' | 'en-AU';
+  gender?: 'male' | 'female';
   preferredVoiceName?: string;
   speed: number;
+  uzbekSpeed?: number;
   pitch: number;
 }
-
-// Helper to detect if a sentence or text is predominantly Uzbek
-export function isUzbekText(text: string): boolean {
-  const lower = text.toLowerCase();
-  const uzbekPatterns = [
-    /\b(salom|men|sen|siz|biz|u|ular|uchun|bilan|emas|haqida|savol|xato|to['’‘`]?g['’‘`]?ri|bo['’‘`]?ladi|qanday|nima|qani|ko['’‘`]?r|ayt|gapir|ingliz|o['’‘`]?zbek|lekin|agar|juda|kerak|dedingmi|voybooo|hahaha|qovurilding|ustoz|tuzoq|dars|kitob|javob|bilasanmi|aytganingdek|shunday|mayli|rahmat|yaxshi|yo['’‘`]?q|qoyil|hayratdaman|bilarkansan|o['’‘`]?rgandingmi|shafqat|aqlingni|ishlat)\b/i,
-    /[oOgG]['’‘`]/,
-    /\b(emasman|emasmi|ekan|ekansan|bo'lsa|bo'lgan|qilmoq|qiladi|beradi|oladi|ber-chi|top-chi|tushuntir)\b/i,
-  ];
-
-  for (const pattern of uzbekPatterns) {
-    if (pattern.test(lower)) return true;
-  }
-  return false;
-}
-
-const DEFAULT_VOICE_CONFIG: VoiceConfig = {
-  engine: 'hd-studio',
-  accent: 'en-US',
-  preferredVoiceName: '',
-  speed: 0.95,
-  pitch: 1.0,
-};
-
-// Global audio player instance for HD Studio TTS
+const DEFAULT_VOICE_CONFIG: VoiceConfig = { provider: process.env.NEXT_PUBLIC_LOCAL_TTS_ENABLED === 'true' ? 'local' : 'microsoft', engine: 'hd-studio', accent: 'en-US', gender: 'male', speed: 1, uzbekSpeed: 1, pitch: 1 };
 let currentAudioPlayer: HTMLAudioElement | null = null;
-let cachedVoices: SpeechSynthesisVoice[] = [];
-
-// Initialize voice listener
-if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-  const loadVoices = () => {
-    cachedVoices = window.speechSynthesis.getVoices();
-  };
-  loadVoices();
-  window.speechSynthesis.onvoiceschanged = loadVoices;
+let controller: AbortController | null = null;
+let audioUrl: string | null = null;
+let playbackId = 0;
+function publish(state: 'loading' | 'speaking' | 'idle' | 'error') {
+  window.dispatchEvent(new CustomEvent('lingua:speech', { detail: state }));
 }
-
 export function getVoiceConfig(): VoiceConfig {
-  if (typeof window === 'undefined') return DEFAULT_VOICE_CONFIG;
-  const saved = localStorage.getItem('lingua_voice_config');
-  if (saved) {
-    try {
-      return { ...DEFAULT_VOICE_CONFIG, ...JSON.parse(saved) };
-    } catch {}
+  if (typeof window === 'undefined') return { ...DEFAULT_VOICE_CONFIG };
+  try {
+    const saved = JSON.parse(localStorage.getItem('lingua_voice_config') || '{}');
+    const provider = saved.voiceSetupVersion === 1 && ['local', 'microsoft'].includes(saved.provider)
+      && (saved.provider !== 'local' || process.env.NEXT_PUBLIC_LOCAL_TTS_ENABLED === 'true')
+      ? saved.provider : DEFAULT_VOICE_CONFIG.provider;
+    return { ...DEFAULT_VOICE_CONFIG, ...saved, provider };
   }
-  return DEFAULT_VOICE_CONFIG;
+  catch { return { ...DEFAULT_VOICE_CONFIG }; }
 }
-
 export function saveVoiceConfig(config: VoiceConfig) {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem('lingua_voice_config', JSON.stringify(config));
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('lingua_voice_config', JSON.stringify({ ...config, voiceSetupVersion: 1 }));
+    window.dispatchEvent(new Event('lingua:voice-settings'));
+  }
 }
-
-// Get clean list of available natural browser voices
-export function getAvailableBrowserVoices(): { name: string; lang: string; isNatural: boolean }[] {
+export function getAvailableBrowserVoices() {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return [];
-  const voices = window.speechSynthesis.getVoices();
-  const englishVoices = voices.filter((v) => v.lang.startsWith('en'));
-
-  // Sort natural/neural voices first
-  return englishVoices
-    .map((v) => ({
-      name: v.name,
-      lang: v.lang,
-      isNatural:
-        v.name.includes('Natural') ||
-        v.name.includes('Google') ||
-        v.name.includes('Neural') ||
-        v.name.includes('Online') ||
-        v.name.includes('Samantha') ||
-        v.name.includes('Daniel') ||
-        v.name.includes('Jenny') ||
-        v.name.includes('Guy') ||
-        v.name.includes('Aria'),
-    }))
-    .sort((a, b) => (b.isNatural ? 1 : 0) - (a.isNatural ? 1 : 0));
+  return window.speechSynthesis.getVoices().filter(v => /^(en|uz)/.test(v.lang)).map(v => ({
+    name: v.name, lang: v.lang, isNatural: /Natural|Google|Neural|Online/i.test(v.name)
+  })).sort((a,b) => Number(b.isNatural) - Number(a.isNatural));
 }
-
-// Pick the best natural speech synthesis voice (Prioritize male voices)
-function findBestVoice(accent: string, preferredVoiceName?: string): SpeechSynthesisVoice | null {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
-  const voices = window.speechSynthesis.getVoices();
-  if (!voices || voices.length === 0) return null;
-
-  // 1. Explicit user choice
-  if (preferredVoiceName) {
-    const exact = voices.find((v) => v.name === preferredVoiceName);
-    if (exact) return exact;
-  }
-
-  // 2. High-priority neural / natural MALE voices for the chosen accent
-  const maleVoices = voices.filter(
-    (v) =>
-      v.lang.startsWith(accent) &&
-      (v.name.includes('Guy') ||
-        v.name.includes('Ryan') ||
-        v.name.includes('David') ||
-        v.name.includes('Mark') ||
-        v.name.includes('George') ||
-        v.name.includes('Daniel') ||
-        v.name.includes('Sardor'))
-  );
-  if (maleVoices.length > 0) return maleVoices[0];
-
-  // 3. Any other voice matching accent excluding known female voices
-  const nonFemaleVoice = voices.find(
-    (v) =>
-      v.lang.startsWith(accent) &&
-      !v.name.includes('Jenny') &&
-      !v.name.includes('Aria') &&
-      !v.name.includes('Zira') &&
-      !v.name.includes('Samantha') &&
-      !v.name.includes('Madina')
-  );
-  if (nonFemaleVoice) return nonFemaleVoice;
-
-  // 4. Any voice matching accent
-  const accentVoice = voices.find((v) => v.lang.startsWith(accent));
-  if (accentVoice) return accentVoice;
-
-  // 5. Any English voice
-  return voices.find((v) => v.lang.startsWith('en')) || null;
-}
-
-// Central Speech Playback Function
-export function speakText(
-  text: string,
-  options: {
-    lang?: string;
-    rate?: number;
-    pitch?: number;
-    engine?: 'hd-studio' | 'browser-natural';
-    onEnd?: () => void;
-    onError?: () => void;
-  } = {}
-) {
-  if (typeof window === 'undefined') return;
-
-  // Stop any previous speech
-  stopSpeaking();
-
-  // Clean text: strip markdown characters
-  const cleanText = text
-    .replace(/[*_#`~[\]]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!cleanText) return;
-
-  const config = getVoiceConfig();
-  const selectedEngine = options.engine || config.engine;
-  const isUzbek = options.lang?.startsWith('uz') || isUzbekText(cleanText);
-  const selectedLang = options.lang || (isUzbek ? 'uz-UZ' : (config.accent || 'en-US'));
-  const selectedRate = options.rate ?? config.speed ?? 0.95;
-  const selectedPitch = options.pitch ?? config.pitch ?? 1.0;
-
-  // ============================================
-  // ENGINE 1: HD STUDIO VOICE (Neural Cloud Audio)
-  // ============================================
-  if (selectedEngine === 'hd-studio') {
-    // Send full clean text (up to 850 characters)
-    const textChunk = cleanText.slice(0, 850);
-    // Use local proxy /api/tts with detected language
-    const ttsUrl = `/api/tts?text=${encodeURIComponent(textChunk)}&lang=${encodeURIComponent(selectedLang)}`;
-
-    const audio = new Audio();
-    currentAudioPlayer = audio;
-    audio.playbackRate = Math.max(0.6, Math.min(1.5, selectedRate));
-
-    let fallbackTriggered = false;
-    const triggerBrowserFallback = () => {
-      if (fallbackTriggered) return;
-      fallbackTriggered = true;
-      speakWithBrowserSynthesis(cleanText, selectedLang, selectedRate, selectedPitch, config.preferredVoiceName, options.onEnd, options.onError);
-    };
-
-    audio.onended = () => {
-      currentAudioPlayer = null;
-      options.onEnd?.();
-    };
-
-    audio.onerror = () => {
-      currentAudioPlayer = null;
-      triggerBrowserFallback();
-    };
-
-    audio.src = ttsUrl;
-    audio.play().catch(() => {
-      // If direct audio autoplay or network fails, fallback to natural browser voice
-      triggerBrowserFallback();
-    });
-
-    return;
-  }
-
-  // ============================================
-  // ENGINE 2: NATURAL BROWSER SYNTHESIS
-  // ============================================
-  speakWithBrowserSynthesis(
-    cleanText,
-    selectedLang,
-    selectedRate,
-    selectedPitch,
-    config.preferredVoiceName,
-    options.onEnd,
-    options.onError
-  );
-}
-
-// Fallback / Direct Browser Speech Synthesis
-function speakWithBrowserSynthesis(
-  text: string,
-  lang: string,
-  rate: number,
-  pitch: number,
-  preferredVoiceName?: string,
-  onEnd?: () => void,
-  onError?: () => void
-) {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-    onError?.();
-    return;
-  }
-
-  window.speechSynthesis.cancel();
-
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = lang;
-  utterance.rate = rate;
-  utterance.pitch = pitch;
-
-  const bestVoice = findBestVoice(lang, preferredVoiceName);
-  if (bestVoice) {
-    utterance.voice = bestVoice;
-  }
-
-  utterance.onend = () => {
-    onEnd?.();
-  };
-
-  utterance.onerror = (e) => {
-    console.warn('SpeechSynthesis error:', e);
-    onError?.();
-  };
-
-  window.speechSynthesis.speak(utterance);
-}
-
-// Stop all playback immediately
 export function stopSpeaking() {
   if (typeof window === 'undefined') return;
-
+  playbackId++;
+  controller?.abort(); controller = null;
   if (currentAudioPlayer) {
-    try {
-      currentAudioPlayer.pause();
-      currentAudioPlayer.currentTime = 0;
-    } catch {}
+    currentAudioPlayer.onended = null; currentAudioPlayer.onerror = null;
+    currentAudioPlayer.pause(); currentAudioPlayer.removeAttribute('src'); currentAudioPlayer.load();
     currentAudioPlayer = null;
   }
-
-  if ('speechSynthesis' in window) {
+  if (audioUrl) { URL.revokeObjectURL(audioUrl); audioUrl = null; }
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+  publish('idle');
+}
+interface SpeakOptions {
+  lang?: string; rate?: number; pitch?: number;
+  engine?: VoiceConfig['engine']; voice?: string;
+  onEnd?: () => void; onError?: () => void;
+  config?: VoiceConfig;
+}
+export function speakText(raw: string, options: SpeakOptions = {}) {
+  if (typeof window === 'undefined') return;
+  stopSpeaking();
+  const id = playbackId;
+  const text = normalizeSpeechText(raw);
+  if (!text) { options.onEnd?.(); return; }
+  const config = options.config || getVoiceConfig();
+  const provider = config.provider === 'local' ? 'local' : 'microsoft';
+  const rate = Math.min(1.3, Math.max(0.7, options.rate ?? config.speed));
+  const pitch = options.pitch ?? config.pitch;
+  const englishAccent = config.accent.startsWith('en') ? config.accent : 'en-US';
+  const lang = options.lang || (isUzbekText(text) ? 'auto' : englishAccent);
+  const finish = (failed = false) => {
+    if (id !== playbackId) return;
+    if (audioUrl) { URL.revokeObjectURL(audioUrl); audioUrl = null; }
+    currentAudioPlayer = null;
+    publish(failed ? 'error' : 'idle');
+    if (failed) options.onError?.(); else options.onEnd?.();
+  };
+  let browserStarted = false;
+  const browser = () => {
+    if (id !== playbackId) return;
+    if (browserStarted) return;
+    browserStarted = true;
+    if (audioUrl) { URL.revokeObjectURL(audioUrl); audioUrl = null; }
+    currentAudioPlayer = null;
+    if (!('speechSynthesis' in window)) { finish(true); return; }
+    const segments = splitSpeechSegments(text, lang === 'uz-mixed' ? 'uz-mixed' : lang.startsWith('uz') ? 'uz' : lang.startsWith('en') ? 'en' : 'auto');
+    const voices = window.speechSynthesis.getVoices();
+    const next = (index: number) => {
+      if (id !== playbackId) return;
+      if (index === segments.length) { finish(); return; }
+      const segment = segments[index];
+      const locale = segment.lang === 'uz' ? 'uz-UZ' : (lang.startsWith('en') ? lang : englishAccent);
+      const compatible = voices.filter(v => v.lang.toLowerCase().startsWith(locale.slice(0,2)));
+      const voice = compatible.find(v => v.name === config.preferredVoiceName) || compatible.find(v => v.lang === locale && /Natural|Neural|Google/i.test(v.name)) || compatible.find(v => v.lang === locale) || compatible[0];
+      // Never pronounce Uzbek with an unrelated English or Turkish voice.
+      if (!voice) { finish(true); return; }
+      const utterance = new SpeechSynthesisUtterance(segment.text);
+      utterance.lang = locale; utterance.voice = voice;
+      utterance.rate = segment.lang === 'uz' ? (config.uzbekSpeed ?? 0.95) : rate;
+      utterance.pitch = segment.lang === 'uz' ? 1 : pitch;
+      utterance.onend = () => next(index + 1);
+      utterance.onerror = () => finish(true);
+      publish('speaking'); window.speechSynthesis.speak(utterance);
+    };
+    next(0);
+  };
+  const requestedSegments = splitSpeechSegments(text, lang === 'uz-mixed' ? 'uz-mixed' : lang.startsWith('uz') ? 'uz' : lang.startsWith('en') ? 'en' : 'auto');
+  const browserVoices = 'speechSynthesis' in window ? window.speechSynthesis.getVoices() : [];
+  const hasBrowserVoices = requestedSegments.every(segment => browserVoices.some(voice => voice.lang.toLowerCase().startsWith(segment.lang)));
+  // Use server synthesis when a saved browser preference has no Uzbek voice.
+  if ((options.engine || config.engine) === 'browser-natural' && hasBrowserVoices) { browser(); return; }
+  controller = new AbortController();
+  const signal = controller.signal;
+  publish('loading');
+  const timeout = setTimeout(() => { if (id === playbackId) controller?.abort(); }, provider === 'local' ? 100000 : 45000);
+  void (async () => {
     try {
-      window.speechSynthesis.cancel();
-    } catch {}
-  }
+      const response = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+        body: JSON.stringify({ text, lang, provider, accent: englishAccent, gender: config.gender || 'male', rate, uzbekRate: config.uzbekSpeed ?? 1, pitch, voice: options.voice }) });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => ({}));
+        throw new Error(detail.error || `Ovoz xizmati xatosi (${response.status}).`);
+      }
+      const blob = await response.blob();
+      if (id !== playbackId) return;
+      if (response.headers.get('X-TTS-Fallback')) {
+        window.dispatchEvent(new CustomEvent('lingua:speech-notice', {
+          detail: 'Gemini vaqtincha ishlamayapti. Microsoft ovozi ishlatilmoqda.',
+        }));
+      }
+      audioUrl = URL.createObjectURL(blob);
+      const audio = new Audio(audioUrl); currentAudioPlayer = audio;
+      // Microsoft applies speed during synthesis, keeping natural pitch.
+      audio.preservesPitch = true;
+      audio.playbackRate = 1;
+      audio.onended = () => finish(); audio.onerror = browser;
+      await audio.play();
+      if (id === playbackId) publish('speaking');
+    } catch (error) {
+      if (id !== playbackId) return;
+      const blocked = error instanceof Error && error.name === 'NotAllowedError';
+      const message = blocked ? 'Brauzer ovozni blokladi. Sayt uchun ovozga ruxsat bering.' : error instanceof Error ? error.message : 'Ovoz ijrosida xato yuz berdi.';
+      console.warn('Speech playback failed:', message);
+      window.dispatchEvent(new CustomEvent('lingua:speech-notice', { detail: message }));
+      if (blocked) finish(true); else browser();
+    }
+    finally { clearTimeout(timeout); }
+  })();
 }
-
-// Preview Voice
-export function previewVoice(config: VoiceConfig, sampleText: string = 'Hello! Welcome to LinguaPulse AI. Practice speaking fluently every day.') {
-  speakText(sampleText, {
-    engine: config.engine,
-    lang: config.accent,
-    rate: config.speed,
-    pitch: config.pitch,
-  });
+export function previewVoice(config: VoiceConfig, sampleText = 'Hello! A little practice every day makes a real difference.', callbacks: Pick<SpeakOptions, 'onEnd' | 'onError'> = {}) {
+  speakText(sampleText, { config, lang: config.accent, ...callbacks });
 }
-
-// Speech recognition helper
 export function isSpeechRecognitionSupported(): boolean {
-  if (typeof window === 'undefined') return false;
-  return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+  return typeof window !== 'undefined' && ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window);
 }
-
-// Dedicated function to play pure native English audio (US/UK) with studio clarity
 export function playEnglishNative(text: string, onEnd?: () => void) {
-  if (typeof window === 'undefined') return;
-  stopSpeaking();
-  const clean = text.replace(/[*_#`~[\]]/g, '').trim().slice(0, 800);
-  if (!clean) return;
-
   const config = getVoiceConfig();
-  const voiceName = config.accent === 'en-GB' ? 'en-GB-RyanNeural' : 'en-US-GuyNeural';
-  const ttsUrl = `/api/tts?text=${encodeURIComponent(clean)}&voice=${encodeURIComponent(voiceName)}`;
-
-  const audio = new Audio(ttsUrl);
-  currentAudioPlayer = audio;
-  audio.onended = () => {
-    currentAudioPlayer = null;
-    onEnd?.();
-  };
-  audio.onerror = () => {
-    currentAudioPlayer = null;
-    onEnd?.();
-  };
-  audio.play().catch(() => {
-    currentAudioPlayer = null;
-    onEnd?.();
-  });
+  speakText(text, { lang: config.accent.startsWith('en') ? config.accent : 'en-US', onEnd, onError: onEnd });
 }
-
-// Dedicated function to play Professor Buster's unified male voice (uz-UZ-SardorNeural)
-// Guarantees a single consistent masculine persona, pristine Uzbek articulation, and zero random female/browser fallbacks
-export function playBusterSpeech(
-  text: string,
-  onEnd?: () => void,
-  onError?: () => void
-) {
-  if (typeof window === 'undefined') return;
-  stopSpeaking();
-
-  const clean = text
-    .replace(/\[MOOD:\s*\w+\]/gi, '')
-    .replace(/[*_#`~[\]]/g, ' ')
-    .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]|[\u2600-\u27BF]/g, '')
-    .trim()
-    .slice(0, 950);
-
-  if (!clean) {
-    onEnd?.();
-    return;
-  }
-
-  // Force voice=buster to guarantee single male Uzbek voice (Sardor Neural)
-  const ttsUrl = `/api/tts?text=${encodeURIComponent(clean)}&voice=buster`;
-
-  const audio = new Audio(ttsUrl);
-  currentAudioPlayer = audio;
-  audio.playbackRate = 1.0;
-
-  audio.onended = () => {
-    currentAudioPlayer = null;
-    onEnd?.();
-  };
-
-  audio.onerror = (e) => {
-    console.warn('Buster audio load error:', e);
-    currentAudioPlayer = null;
-    onError?.();
-    // Do not fall back to browser synthesis English voice to prevent jarring voice switches
-  };
-
-  audio.play().catch((err) => {
-    console.warn('Buster audio playback failed (e.g. autoplay block):', err);
-    currentAudioPlayer = null;
-    onError?.();
-  });
+export function playBusterSpeech(text: string, onEnd?: () => void, onError?: () => void) {
+  const config = getVoiceConfig();
+  speakText(text, { voice: 'buster', lang: 'uz-mixed', onEnd, onError,
+    config: { ...config, speed: Math.max(1.15, config.speed), uzbekSpeed: Math.max(1.15, config.uzbekSpeed ?? 1) } });
 }
-

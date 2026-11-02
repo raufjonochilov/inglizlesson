@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import './modern.css';
+import './stage.css';
 
 export const metadata: Metadata = {
   title: 'LinguaPulse AI — Zamonaviy Ingliz Tili Ta\'lim Platformasi',
@@ -20,9 +22,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  maximumScale: 1,
-  userScalable: false,
-  themeColor: '#0f172a',
+  themeColor: '#f2f6ff',
 };
 
 export default function RootLayout({
@@ -31,8 +31,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="uz" className="dark">
-      <body className="antialiased selection:bg-indigo-500 selection:text-white bg-[#0f172a]">
+    <html lang="uz">
+      <body className="antialiased selection:bg-blue-700 selection:text-white bg-[#f2f6ff]">
         {children}
       </body>
     </html>

@@ -61,6 +61,69 @@
 
 ## 💻 Loyihani Ishga Tushirish
 
+### Yangi dizayn va ovoz studiyasi
+
+Yon menyu, mobil navigatsiya, interaktiv dars kartalari va progress ko‘rsatkichlari yangilandi.
+Bosh sahifadagi ovoz studiyasida o‘zbekcha, inglizcha yoki aralash namunani tinglash,
+erkak/ayol spiker, US/UK/AU lahjasi va nutq tezligini tanlash mumkin.
+Sozlamalar boshqa modullarga ham qo‘llanadi; Professor Buster erkak ovozini saqlaydi.
+
+Ilovadagi ovoz bazasi — Microsoft: Sardor/Madina (UZ), Guy/Jenny (US),
+Ryan/Sonia (UK), William/Natasha (AU). Eski Gemini ovoz sozlamalari ham
+Microsoft sifatida o‘qiladi. Gemini kaliti AI tutor uchun saqlanadi, lekin
+interfeysdan ovoz yaratishda ishlatilmaydi. Azure sozlanmaganida Edge TTS
+ishlaydi; internet talab qilinadi, tashqi xizmatning uzluksiz yoki mutlaqo
+limitsiz ishlashi kafolatlanmaydi. Aralash matndagi qo‘shtirnoqqa olingan
+inglizcha misollar tiliga mos spikerda o‘qiladi.
+
+Microsoft bazasida rasmiy Azure Speech uchun `.env.local` fayliga `AZURE_SPEECH_KEY` va
+`AZURE_SPEECH_REGION` kiriting (namuna: `.env.example`). Bu server kalitlari brauzerga uzatilmaydi.
+Ular berilmasa mavjud Edge TTS ishlatiladi. Neural xizmat ishlamasa brauzerdagi mos til
+ovozi qo‘llanadi; o‘zbekcha spiker bo‘lmasa boshqa tildagi ovoz bilan almashtirilmaydi.
+Azure resursi o‘z tarifiga ega. Sozlash:
+[Microsoft Speech REST hujjatlari](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/rest-text-to-speech).
+
+Tekshiruvlar: `npm test`, `npx tsc --noEmit --incremental false`, `npm run build`.
+Haqiqiy Microsoft ovoz xizmati bilan UZ/EN va aralash nutqni tekshirish: `npm run test:voice:live`
+(internet talab qiladi; `.env.local` kalitlarini yuklamaydi).
+
+### Mahalliy o‘zbekcha ovoz — Navoiy TTS
+
+Windows va NVIDIA CUDA GPU uchun `npm run tts:install` model va kutubxonalarni
+loyiha ichidagi `.local-tts` papkasiga o‘rnatadi (bir necha GB yuklanadi).
+`npm run tts:local` ovoz serverini `127.0.0.1:8765` da ishga tushiradi.
+`.env.local` ichida `NEXT_PUBLIC_LOCAL_TTS_ENABLED=true` qo‘yib, Next.js serverini
+qayta ishga tushiring. Ovoz studiyasida “Navoiy · Mahalliy o‘zbekcha” tanlanadi.
+
+O‘zbekcha nutq mahalliy GPU’da yaratiladi; API kvotasi va har-so‘rov to‘lovi yo‘q.
+Inglizcha rejim Microsoft orqali ishlaydi va internet talab qiladi. Navoiy bitta
+paketdagi namuna ovozidan foydalanadi; erkak/ayol tanlovi faqat Microsoft uchun.
+Aralash matn talaffuzi modelga bog‘liq. Ovoz serveri ishlamayotganda mahalliy
+so‘rov tashqi TTS xizmatiga yashirin yuborilmaydi. Tayyor audiolar diskda 256 MB
+gacha saqlanadi. Kompyuter qayta yoqilgach `npm run tts:local` ni yana ishga tushiring.
+
+Manba: [Navoiy TTS](https://huggingface.co/aisha-org/navoiy-tts), Apache-2.0;
+CosyVoice va Matcha-TTS litsenziyalari yuklangan manba papkalarida saqlanadi.
+
+### Production veb-server va Android
+
+AI va TTS funksiyalari Next.js serverini talab qiladi. `npm run build` va
+`npm start` orqali serverni ishga tushiring; statik `out` papkasi API xizmatlarini bajarmaydi.
+Server muhitida `GEMINI_API_KEY` ni belgilang yoki ilova sozlamalarida shaxsiy kalit kiriting.
+
+Android ilovasi HTTPS orqali shu serverni ochadi. PowerShell misoli:
+
+```powershell
+$env:LINGUAPULSE_SERVER_URL = 'https://sizning-serveringiz.example'
+npm run android:sync
+npm run android:build
+```
+
+Manzilni haqiqiy, ishlayotgan Next.js serveri bilan almashtiring. Android konfiguratsiyasi
+HTTPS manzil berilmasa xato qaytaradi. `out` papkasi Capacitor uchun boshlang‘ich
+veb-resurs bo‘lib qoladi; yangi interfeys va API serverdan yuklanadi. Ilova internet talab qiladi.
+AI xizmati ishlamasa grammatik va IELTS bahosi chiqarilmaydi, dars yakuni tasdiqlanmaydi.
+
 ### 1-usul: Bitta bosish bilan (One-Click)
 Root papkadagi [start-english-ai.bat](file:///C:/Users/RF/Documents/Anti/start-english-ai.bat) faylini ikki marta bosing.
 

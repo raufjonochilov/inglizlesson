@@ -34,20 +34,7 @@ Analyze the user's sentence and return a STRICT, VALID JSON object with this exa
     } catch (apiError: any) {
       console.warn('Gemini analyze fallback triggered:', apiError.message);
       
-      // Intelligent fallback logic for common beginner/intermediate patterns
-      const input = sentence.trim();
-      const isSimple = input.split(' ').length < 5;
-      
-      return NextResponse.json({
-        isCorrect: !input.toLowerCase().includes('i is') && !input.toLowerCase().includes('he go'),
-        original: input,
-        corrected: input.replace(/\bi is\b/gi, 'I am').replace(/\bhe go\b/gi, 'he goes'),
-        nativeVersion: `${input} (Native alternative: "To put it simply, ${input.toLowerCase()}")`,
-        cefrLevel: isSimple ? 'A2' : 'B2',
-        explanationUz: 'Jumlada asosiy grammatik struktura va zamonlar uyg\'unligiga e\'tibor qarating. So\'z tartibi (Subject + Verb + Object) to\'g\'ri saqlangan.',
-        suggestions: ['moreover', 'substantially', 'in other words', 'fluently'],
-        isFallback: true,
-      });
+      return NextResponse.json({ error: 'AI xizmati hozir ishlamayapti. Natija baholanmadi. Qayta urinib ko‘ring.' }, { status: 503 });
     }
   } catch (error: any) {
     console.error('Analyze API error:', error);

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Stethoscope,
   BookOpen,
@@ -63,7 +63,8 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
     const saved = localStorage.getItem('lingua_mastered_grammar_topics');
     if (saved) {
       try {
-        setMasteredTopics(JSON.parse(saved));
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) setMasteredTopics(parsed.filter((id) => GRAMMAR_TOPICS_LIST.some(t => t.id === id)));
       } catch {}
     }
   }, []);
@@ -97,7 +98,8 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
     { id: 'Reported Speech', label: 'O\'zlashtirma Gap' },
     { id: 'Clauses & Inversion', label: 'Inversiya & Urg\'u' },
     { id: 'Gerund & Infinitives', label: 'Gerund & Infinitiv' },
-    { id: 'Nouns & Articles', label: 'Ot & Sifatlar' },
+    { id: 'Nouns & Articles', label: 'Ot va artikllar' },
+    { id: 'Connectors & Conjunctions', label: 'Bog‘lovchilar' },
   ];
 
   // Filtered topics list
@@ -124,22 +126,30 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
   }, [selectedSeries, selectedBook, selectedCategory, searchQuery]);
 
   // Interactive Quiz state inside Topic Modal
-  const [selectedQuizAnswer, setSelectedQuizAnswer] = useState<string | null>(null);
-  const [isQuizAnswerChecked, setIsQuizAnswerChecked] = useState(false);
+  const [quizAnswers, setQuizAnswers] = useState<Record<string, string>>({});
   const [quizScore, setQuizScore] = useState(0);
-
-  const handleSelectQuizAnswer = (ans: string, correctAns: string) => {
-    if (isQuizAnswerChecked) return;
-    setSelectedQuizAnswer(ans);
-    setIsQuizAnswerChecked(true);
-    onActivity();
-
-    if (ans === correctAns) {
-      setQuizScore((prev) => prev + 10);
-      if (soundEnabled) SoundFX.playSuccess();
-    } else {
-      if (soundEnabled) SoundFX.playChime();
+  const lessonDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (selectedTopic) {
+      lessonDialog.current?.showModal();
+      const previous = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => { document.body.style.overflow = previous; };
     }
+  }, [selectedTopic]);
+  const openTopic = (topic: GrammarTopic) => {
+    setQuizAnswers({});
+    setSelectedTopic(topic);
+    onActivity();
+  };
+  const handleSelectQuizAnswer = (id: string, ans: string, correctAns: string) => {
+    if (quizAnswers[id] !== undefined) return;
+    setQuizAnswers(prev => ({ ...prev, [id]: ans }));
+    onActivity();
+    if (ans === correctAns) {
+      setQuizScore(prev => prev + 10);
+      if (soundEnabled) SoundFX.playSuccess();
+    } else if (soundEnabled) SoundFX.playChime();
   };
 
   // Copied formula state
@@ -152,6 +162,7 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
 
   // --- AI Grammar Doctor State & Handlers ---
   const [inputText, setInputText] = useState('');
+  const [assessmentError, setAssessmentError] = useState('');
   const [doctorLoading, setDoctorLoading] = useState(false);
   const [doctorResult, setDoctorResult] = useState<GrammarResult | null>(null);
   const [doctorCopied, setDoctorCopied] = useState(false);
@@ -170,6 +181,8 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
 
     if (soundEnabled) SoundFX.playClick();
     setDoctorLoading(true);
+    setAssessmentError('');
+    setDoctorResult(null);
     onActivity();
 
     try {
@@ -180,6 +193,7 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
       });
 
       const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'Baholash bajarilmadi');
       if (!data.error) {
         setDoctorResult(data);
         if (soundEnabled) {
@@ -189,6 +203,7 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
       }
     } catch (err) {
       console.error('Analyze error:', err);
+      setAssessmentError(err instanceof Error ? err.message : 'Server bilan bog‘lanib bo‘lmadi. Qayta urinib ko‘ring.');
     } finally {
       setDoctorLoading(false);
     }
@@ -201,318 +216,60 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
   };
 
   return (
-    <div className="max-w-5xl mx-auto p-3 sm:p-5 space-y-6 animate-fade-in">
-      {/* 1. Header Banner & Mode Switcher */}
-      <div className="bg-gradient-to-r from-white via-teal-50/30 to-indigo-50/30 dark:from-slate-900 dark:via-teal-950/20 dark:to-indigo-950/20 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 sm:p-6 shadow-xl backdrop-blur-md">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span className="p-3 rounded-2xl bg-teal-600 text-white shadow-lg shadow-teal-500/25">
-              <BookOpen className="w-6 h-6" />
-            </span>
-            <div>
-              <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-                <span>Grammatika Akademiyasi & Doctor</span>
-                <span className="text-[11px] font-extrabold px-2.5 py-0.5 rounded-full bg-gradient-to-r from-teal-500 to-indigo-600 text-white shadow-sm uppercase">
-                  Master Curricula
-                </span>
-              </h1>
-              <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5">
-                Grammarway 1-4 • Murphy (Red, Blue, Green) • Destination B1, B2, C1/C2
-              </p>
-            </div>
-          </div>
-
-          {/* Mode Switcher */}
-          <div className="flex bg-slate-100 dark:bg-slate-800/80 p-1.5 rounded-2xl border border-slate-200/60 dark:border-slate-700/60 shadow-inner">
-            <button
-              onClick={() => {
-                setActiveMode('library');
-                if (soundEnabled) SoundFX.playClick();
-              }}
-              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl transition ${
-                activeMode === 'library'
-                  ? 'bg-white dark:bg-slate-700 text-teal-600 dark:text-teal-300 shadow-md'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>📚 Darsliklar Grammatikasi</span>
-            </button>
-            <button
-              onClick={() => {
-                setActiveMode('doctor');
-                if (soundEnabled) SoundFX.playClick();
-              }}
-              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl transition ${
-                activeMode === 'doctor'
-                  ? 'bg-white dark:bg-slate-700 text-teal-600 dark:text-teal-300 shadow-md'
-                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
-            >
-              <Stethoscope className="w-3.5 h-3.5" />
-              <span>🩺 AI Grammar Doctor</span>
-            </button>
+    <div className="grammar-studio">
+      <header className="grammar-hero">
+        <div className="grammar-hero-copy">
+          <span className="grammar-eyebrow"><Sparkles size={15} /> GRAMMAR STUDIO</span>
+          <h1>Qoidani tushuning.<br /><em>Ishonch bilan gapiring.</em></h1>
+          <p>Bir mavzu, aniq formula, jonli misollar. Bilimingizni darhol mashqda sinab ko‘ring.</p>
+          <div className="grammar-mode" aria-label="O‘rganish rejimi">
+            <button aria-pressed={activeMode === 'library'} onClick={() => setActiveMode('library')}><BookOpen size={18} /> Darslar kutubxonasi</button>
+            <button aria-pressed={activeMode === 'doctor'} onClick={() => setActiveMode('doctor')}><Stethoscope size={18} /> AI Grammar Doctor</button>
           </div>
         </div>
-
-        {/* Stats Strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mt-5 pt-4 border-t border-slate-200/60 dark:border-slate-800">
-          <div className="bg-white/80 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/50 p-2.5 rounded-2xl text-center shadow-sm">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Jami Mavzular</span>
-            <span className="text-lg font-black text-teal-600 dark:text-teal-400">{GRAMMAR_TOPICS_LIST.length} ta dars</span>
-          </div>
-          <div className="bg-white/80 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/50 p-2.5 rounded-2xl text-center shadow-sm">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Filtrda mavjud</span>
-            <span className="text-lg font-black text-slate-900 dark:text-white">{filteredTopics.length} ta</span>
-          </div>
-          <div className="bg-white/80 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/50 p-2.5 rounded-2xl text-center shadow-sm">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">O'zlashtirilgan</span>
-            <span className="text-lg font-black text-emerald-600 dark:text-emerald-400">{masteredTopics.length} ta</span>
-          </div>
-          <div className="bg-white/80 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/50 p-2.5 rounded-2xl text-center shadow-sm">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Test Ballari</span>
-            <span className="text-lg font-black text-amber-500">{quizScore} ball</span>
-          </div>
+        <div className="grammar-formula-art" aria-hidden="true">
+          <span className="grammar-art-label">GAP QURISH USTAXONASI</span>
+          <div className="grammar-tokens"><span>I<small>ega</small></span><b>+</b><span>am<small>fe’l</small></span><b>+</b><span>ready<small>sifat</small></span></div>
+          <div className="grammar-art-result"><CheckCircle2 size={21} /> I am ready to learn.</div>
+          <span className="grammar-art-note">Kichik qadamlar. Katta o‘zgarish.</span>
         </div>
+      </header>
+      <div className="grammar-progress-strip">
+        <div><span className="grammar-progress-icon"><GraduationCap /></span><span><strong>{masteredTopics.length} / {GRAMMAR_TOPICS_LIST.length}</strong><small>Mavzu o‘zlashtirilgan</small></span></div>
+        <div className="grammar-progress-track" role="progressbar" aria-label="O‘zlashtirilgan mavzular" aria-valuenow={masteredTopics.length} aria-valuemin={0} aria-valuemax={GRAMMAR_TOPICS_LIST.length}><span style={{width: (masteredTopics.length / GRAMMAR_TOPICS_LIST.length * 100) + '%'}} /></div>
+        <div><Sparkles size={20} /><span><strong>{quizScore} ball</strong><small>Ushbu sessiyadagi natija</small></span></div>
       </div>
-
       {activeMode === 'library' ? (
-        /* =========================================================
-           TAB 1: TEXTBOOK GRAMMAR LIBRARY (GRAMMARWAY, MURPHY, DESTINATION)
-           ========================================================= */
-        <div className="space-y-6">
-          {/* Series Selection Cards */}
-          <div className="space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                <GraduationCap className="w-4 h-4 text-teal-600" />
-                <span>Grammatika Darsligini Tanlang:</span>
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
-              {GRAMMAR_SERIES_INFO.map((series) => {
-                const isSelected = selectedSeries === series.id;
-                return (
-                  <button
-                    key={series.id}
-                    onClick={() => {
-                      setSelectedSeries(series.id);
-                      setSelectedBook('All');
-                      if (soundEnabled) SoundFX.playClick();
-                    }}
-                    className={`p-3.5 rounded-2xl border text-left transition-all duration-200 flex flex-col justify-between relative overflow-hidden group ${
-                      isSelected
-                        ? 'bg-gradient-to-br from-teal-600 to-teal-700 text-white border-teal-500 shadow-lg shadow-teal-500/25 scale-[1.02]'
-                        : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 hover:border-teal-400 shadow-sm'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xl">{series.icon}</span>
-                      {isSelected && (
-                        <span className="w-2 h-2 rounded-full bg-emerald-300 animate-pulse" />
-                      )}
-                    </div>
-                    <div className="mt-2">
-                      <h3 className={`font-black text-sm tracking-tight ${isSelected ? 'text-white' : 'text-slate-900 dark:text-white'}`}>
-                        {series.name}
-                      </h3>
-                      <p className={`text-[11px] mt-0.5 line-clamp-1 ${isSelected ? 'text-teal-100' : 'text-slate-400'}`}>
-                        {series.desc}
-                      </p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+        <div className="grammar-library">
+          <div className="grammar-section-title"><div><span className="grammar-eyebrow">SIZNING O‘QUV YO‘LINGIZ</span><h2>Bugun nimani o‘rganamiz?</h2></div><span>{filteredTopics.length} ta mavzu</span></div>
+          <div className="grammar-collections">
+            {GRAMMAR_SERIES_INFO.map((series, index) => {
+              const total = GRAMMAR_TOPICS_LIST.filter(t => series.id === 'All' || t.series === series.id).length;
+              return <button key={series.id} aria-pressed={selectedSeries === series.id} onClick={() => {setSelectedSeries(series.id); setSelectedBook('All');}}>
+                <span className="grammar-collection-top"><BookOpen size={21} /><span>0{index + 1}</span></span>
+                <strong>{series.name}</strong><span>{total} mavzu <ChevronRight size={15} /></span>
+              </button>;
+            })}
           </div>
-
-          {/* Specific Book & Category Filters Box */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
-            {/* Specific Book Pills */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-              <span className="text-xs font-bold text-slate-400 whitespace-nowrap flex items-center gap-1">
-                <Bookmark className="w-3.5 h-3.5 text-teal-600" />
-                <span>Kitob:</span>
-              </span>
-              <button
-                onClick={() => setSelectedBook('All')}
-                className={`px-3 py-1 rounded-xl text-xs font-bold whitespace-nowrap transition border ${
-                  selectedBook === 'All'
-                    ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
-                    : 'bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-                }`}
-              >
-                Barchasi ({availableBooks.length})
-              </button>
-              {availableBooks.map((b) => (
-                <button
-                  key={b.id}
-                  onClick={() => {
-                    setSelectedBook(b.id);
-                    if (soundEnabled) SoundFX.playClick();
-                  }}
-                  className={`px-3 py-1 rounded-xl text-xs font-bold whitespace-nowrap transition border flex items-center gap-1.5 ${
-                    selectedBook === b.id
-                      ? 'bg-teal-600 text-white border-teal-600 shadow-md shadow-teal-500/20'
-                      : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100'
-                  }`}
-                >
-                  <span>{b.badge}</span>
-                  <span className="text-[10px] font-mono opacity-80">({b.level})</span>
-                </button>
-              ))}
-            </div>
-
-            {/* Category Pills */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pt-2 border-t border-slate-100 dark:border-slate-800 pb-1 no-scrollbar">
-              <span className="text-xs font-bold text-slate-400 whitespace-nowrap">Bo'lim:</span>
-              {categoriesList.map((cat) => (
-                <button
-                  key={cat.id}
-                  onClick={() => setSelectedCategory(cat.id)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap transition ${
-                    selectedCategory === cat.id
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                  }`}
-                >
-                  {cat.label}
-                </button>
-              ))}
-            </div>
+          <div className="grammar-filters">
+            <label className="grammar-search"><Search size={19}/><input aria-label="Grammatika mavzusini qidirish" placeholder="Mavzu yoki formulani qidiring…" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} /></label>
+            <label>Kitob<select value={selectedBook} onChange={e => setSelectedBook(e.target.value)}><option value="All">Barcha kitoblar</option>{availableBooks.map(book => <option key={book.id} value={book.id}>{book.name} · {book.level}</option>)}</select></label>
+            <label>Bo‘lim<select value={selectedCategory} onChange={e => setSelectedCategory(e.target.value as GrammarCategory)}>{categoriesList.map(category => <option key={category.id} value={category.id}>{category.label}</option>)}</select></label>
           </div>
-
-          {/* Search Input */}
-          <div className="relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Grammatika qoidasi, formula yoki o'zbekcha mavzu nomi bo'yicha qidirish..."
-              className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl text-xs font-medium text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 shadow-sm"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400 hover:text-slate-600"
-              >
-                ✕
-              </button>
-            )}
-          </div>
-
-          {/* Topics Grid */}
-          {filteredTopics.length === 0 ? (
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-10 text-center shadow-lg space-y-3">
-              <Search className="w-10 h-10 text-slate-400 mx-auto" />
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Mos keluvchi grammatika mavzusi topilmadi
-              </h3>
-              <p className="text-xs text-slate-500">
-                Qidiruv so'zini o'zgartiring yoki filtrlarni tozalang.
-              </p>
-              <button
-                onClick={() => {
-                  setSelectedSeries('All');
-                  setSelectedBook('All');
-                  setSelectedCategory('All');
-                  setSearchQuery('');
-                }}
-                className="px-4 py-2 bg-teal-600 text-white rounded-xl text-xs font-bold"
-              >
-                Barcha filtrlarni tozalash
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filteredTopics.map((topic) => {
-                const isMastered = masteredTopics.includes(topic.id);
-                return (
-                  <div
-                    key={topic.id}
-                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-teal-400 dark:hover:border-teal-500/50 rounded-3xl p-5 shadow-lg transition-all duration-300 flex flex-col justify-between space-y-4 group relative overflow-hidden"
-                  >
-                    <div>
-                      {/* Top Badges */}
-                      <div className="flex items-center justify-between gap-2 mb-2.5">
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="px-2 py-0.5 rounded-md bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 font-bold text-[10px] border border-teal-200 dark:border-teal-800">
-                            {topic.book} • {topic.unit}
-                          </span>
-                          <span className="px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono text-[10px] font-bold">
-                            {topic.level}
-                          </span>
-                        </div>
-
-                        <button
-                          onClick={() => toggleMasteredTopic(topic.id)}
-                          title={isMastered ? "O'zlashtirilganlar ro'yxatidan chiqarish" : "O'zlashtirildi deb belgilash"}
-                          className={`p-1.5 rounded-xl border transition ${
-                            isMastered
-                              ? 'bg-emerald-500 text-white border-emerald-500 shadow-sm'
-                              : 'text-slate-400 border-slate-200 dark:border-slate-700 hover:text-emerald-500'
-                          }`}
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-
-                      {/* Title */}
-                      <h3 className="text-base font-black text-slate-900 dark:text-white group-hover:text-teal-600 dark:group-hover:text-teal-400 transition leading-snug">
-                        {topic.titleEn}
-                      </h3>
-                      <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mt-0.5">
-                        {topic.titleUz}
-                      </p>
-
-                      {/* Formula Card */}
-                      <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 rounded-xl p-2.5 mt-3 font-mono text-[11px] text-slate-800 dark:text-slate-200 flex items-center justify-between gap-2">
-                        <span className="line-clamp-1">{topic.formula}</span>
-                        <button
-                          onClick={() => handleCopyFormula(topic.formula)}
-                          title="Formulani nusxalash"
-                          className="text-slate-400 hover:text-teal-600 p-1"
-                        >
-                          <Copy className="w-3 h-3" />
-                        </button>
-                      </div>
-
-                      {/* Explanation Snippet */}
-                      <p className="text-xs text-slate-600 dark:text-slate-300 mt-2.5 line-clamp-2 leading-relaxed">
-                        {topic.explanationUz}
-                      </p>
-                    </div>
-
-                    {/* Bottom Action Bar */}
-                    <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
-                      <span className="text-[11px] font-medium text-slate-400">
-                        {topic.practice.length} ta interaktiv test
-                      </span>
-
-                      <button
-                        onClick={() => {
-                          setSelectedTopic(topic);
-                          setSelectedQuizAnswer(null);
-                          setIsQuizAnswerChecked(false);
-                          if (soundEnabled) SoundFX.playClick();
-                        }}
-                        className="flex items-center gap-1.5 px-3.5 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold shadow-md shadow-teal-500/20 transition"
-                      >
-                        <span>Darsni O'rganish & Test</span>
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          {filteredTopics.length === 0 ? <div className="grammar-empty"><Search size={32}/><h3>Mavzu topilmadi</h3><p>Boshqa so‘z yozing yoki filtrlarni tozalang.</p><button onClick={() => {setSelectedSeries('All');setSelectedBook('All');setSelectedCategory('All');setSearchQuery('');}}>Filtrlarni tozalash</button></div> :
+            <div className="grammar-topic-grid">{filteredTopics.map((topic, index) => {
+              const mastered = masteredTopics.includes(topic.id);
+              return <article key={topic.id} className="grammar-topic" style={{'--card-delay': Math.min(index, 5) * 55 + 'ms'} as React.CSSProperties}>
+                <div className="grammar-topic-meta"><span>{topic.level} <span>· {topic.series}</span></span><button aria-label={mastered ? 'O‘zlashtirilgan belgini olib tashlash' : 'O‘zlashtirildi deb belgilash'} aria-pressed={mastered} onClick={() => toggleMasteredTopic(topic.id)}>{mastered ? <CheckCircle2 size={20}/> : <Bookmark size={20}/>}</button></div>
+                <span className="grammar-topic-unit">{topic.unit}</span><h3>{topic.titleEn}</h3><p>{topic.titleUz}</p>
+                <div className="grammar-topic-formula"><span>FORMULA</span><code>{topic.formula}</code></div>
+                <button className="grammar-open-lesson" onClick={() => openTopic(topic)}><span>{mastered ? 'Qayta mustahkamlash' : 'Darsni boshlash'}</span><span>{topic.practice.length} mashq <ChevronRight size={17}/></span></button>
+              </article>;
+            })}</div>}
 
           {/* 3. TOPIC DETAIL & PRACTICE MODAL */}
           {selectedTopic && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/80 backdrop-blur-md animate-fade-in overflow-y-auto">
+            <dialog aria-label={selectedTopic.titleEn} ref={lessonDialog} className="grammar-lesson-dialog" onCancel={() => setSelectedTopic(null)} onClick={e => {if (e.target === e.currentTarget) setSelectedTopic(null);}}>
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl max-w-2xl w-full p-6 shadow-2xl space-y-5 my-auto max-h-[90vh] overflow-y-auto">
                 {/* Modal Header */}
                 <div className="flex items-start justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
@@ -533,7 +290,7 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
                     </p>
                   </div>
                   <button
-                    onClick={() => setSelectedTopic(null)}
+                    aria-label="Darsni yopish" onClick={() => setSelectedTopic(null)}
                     className="p-2 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700"
                   >
                     <X className="w-5 h-5" />
@@ -668,13 +425,13 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                           {q.options.map((opt, i) => {
-                            const isChosen = selectedQuizAnswer === opt;
+                            const isChosen = quizAnswers[q.id] === opt;
                             const isCorrect = opt === q.correctAnswer;
 
                             let btnCls =
                               'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 hover:border-indigo-400';
 
-                            if (isQuizAnswerChecked) {
+                            if ((quizAnswers[q.id] !== undefined)) {
                               if (isCorrect) {
                                 btnCls = 'bg-emerald-500 text-white border-emerald-500 font-bold';
                               } else if (isChosen && !isCorrect) {
@@ -685,8 +442,8 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
                             return (
                               <button
                                 key={i}
-                                disabled={isQuizAnswerChecked}
-                                onClick={() => handleSelectQuizAnswer(opt, q.correctAnswer)}
+                                disabled={(quizAnswers[q.id] !== undefined)}
+                                onClick={() => handleSelectQuizAnswer(q.id, opt, q.correctAnswer)}
                                 className={`p-2.5 rounded-xl border text-xs font-semibold text-left transition ${btnCls}`}
                               >
                                 {opt}
@@ -695,10 +452,10 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
                           })}
                         </div>
 
-                        {isQuizAnswerChecked && (
+                        {(quizAnswers[q.id] !== undefined) && (
                           <div className="text-xs pt-1">
                             <p className="font-semibold text-slate-700 dark:text-slate-300">
-                              💡 Izoh: {q.explanationUz}
+                              {quizAnswers[q.id] === q.correctAnswer ? '🎉 Ajoyib! To‘g‘ri javob. ' : '💡 Keling, tushunib olamiz. '}{q.explanationUz}
                             </p>
                           </div>
                         )}
@@ -729,7 +486,7 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
                   </button>
                 </div>
               </div>
-            </div>
+            </dialog>
           )}
         </div>
       ) : (
@@ -804,6 +561,7 @@ export default function GrammarDoctor({ apiKey, soundEnabled, onActivity }: Gram
           </div>
 
           {/* Doctor Analysis Results Card */}
+      {assessmentError && <p role="alert" className="text-red-500 p-3">{assessmentError}</p>}
           {doctorResult && (
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-lg space-y-5 animate-fade-in">
               <div className="flex items-center justify-between flex-wrap gap-2 pb-4 border-b border-slate-100 dark:border-slate-800">
