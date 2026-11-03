@@ -19,7 +19,9 @@ import {
   RotateCcw,
   Award,
   LayoutGrid,
+  LayoutDashboard,
 } from 'lucide-react';
+import ThemeToggle from '@/components/ThemeToggle';
 import {
   SoundFX,
   getVoiceConfig,
@@ -31,7 +33,7 @@ import {
 } from '@/lib/speech';
 import Logo3D from '@/components/Logo3D';
 
-export type ActiveTab = 'lessons' | 'speaking' | 'sarcastic' | 'grammar' | 'ielts' | 'vocab' | 'pronunciation';
+export type ActiveTab = 'lessons' | 'speaking' | 'sarcastic' | 'grammar' | 'ielts' | 'vocab' | 'pronunciation' | 'dashboard';
 export type NavGroup = 'learn' | 'ai' | 'exam';
 
 export interface NavItem {
@@ -102,6 +104,14 @@ export default function Navbar({
 ];
 
 const navItems: NavItem[] = [
+  {
+    id: 'dashboard',
+    label: 'Statistika',
+    icon: <LayoutDashboard className="w-4 h-4 text-emerald-400" />,
+    badge: 'Yutuqlar',
+    group: 'learn',
+    description: "XP ballar, daraja, yutuqlar va o'quv faolligi statistikasi",
+  },
   // 1. O'rganish (Core Curriculum & Books)
   {
     id: 'lessons',
@@ -241,7 +251,7 @@ const navItems: NavItem[] = [
         <div className="mt-auto space-y-1 pt-6"><button className="sidebar-link" onClick={openVoiceSettings}><Sliders size={18}/>Ovoz sozlamalari</button><button className="sidebar-link" onClick={() => { setTempKey(apiKey); setShowKeyModal(true); }}><Key size={18}/>AI ulanishi<span className={apiKey ? 'connection-dot connected' : 'connection-dot'}/></button></div>
         <div className="sidebar-profile"><span>O‘</span><div><strong>O‘rganuvchi</strong><small>Shaxsiy o‘quv makoni</small></div><button onClick={() => setSoundEnabled(!soundEnabled)} aria-label={soundEnabled ? 'Effektlarni o‘chirish' : 'Effektlarni yoqish'}>{soundEnabled ? <Volume2 size={17}/> : <VolumeX size={17}/>}</button></div>
       </aside>
-      <header className="studio-topbar"><div><span className="text-slate-500">Mening makonim</span><span className="mx-3 text-slate-600">/</span><strong>{navItems.find(item => item.id === activeTab)?.label}</strong></div><div className="flex items-center gap-3"><span className="streak-pill"><Flame size={15}/>{streak} kunlik seriya</span><button onClick={openVoiceSettings} className="topbar-voice" aria-label="Ovoz sozlamalari"><Headphones size={17}/><span>Ovoz studiyasi</span></button><span className="profile-avatar">O‘</span></div></header>
+      <header className="studio-topbar"><div><span className="text-slate-500">Mening makonim</span><span className="mx-3 text-slate-600">/</span><strong>{navItems.find(item => item.id === activeTab)?.label}</strong></div><div className="flex items-center gap-3"><span className="streak-pill"><Flame size={15}/>{streak} kunlik seriya</span><button onClick={openVoiceSettings} className="topbar-voice" aria-label="Ovoz sozlamalari"><Headphones size={17}/><span>Ovoz studiyasi</span></button><ThemeToggle /><span className="profile-avatar">O‘</span></div></header>
       <nav className="studio-mobile-nav" aria-label="Mobil menyu">{navItems.map(item => <button key={item.id} onClick={() => handleTabClick(item.id)} aria-current={activeTab === item.id ? 'page' : undefined} className={activeTab === item.id ? 'is-active' : ''}>{item.icon}<span>{item.label}</span></button>)}</nav>
 
       {/* VOICE SETTINGS MODAL (TINIQ OVOZ SOZLAMALARI) */}

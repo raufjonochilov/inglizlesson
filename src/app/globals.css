@@ -1507,3 +1507,67 @@ body,body>div:first-child{background:#f2f6ff}.studio-sidebar{box-shadow:8px 0 35
 @media(max-width:760px){.grammar-studio{padding:12px;gap:18px}.grammar-hero{grid-template-columns:1fr;padding:25px}.grammar-formula-art{display:none}.grammar-collections{grid-template-columns:repeat(2,minmax(0,1fr))}.grammar-collections>button{padding:16px}.grammar-filters{grid-template-columns:1fr 1fr;padding:13px}.grammar-search{grid-column:1/-1}.grammar-progress-strip{flex-wrap:wrap;padding:16px;gap:15px}.grammar-progress-track{order:3;flex-basis:100%}.grammar-progress-strip>div:last-child{margin-left:auto}.grammar-section-title h2{font-size:21px}}
 @media(max-width:480px){.grammar-topic-grid{grid-template-columns:1fr}.grammar-hero h1{font-size:29px}.grammar-mode button{padding:10px;font-size:11px}.grammar-progress-strip small{font-size:9px}.grammar-collections strong{font-size:12px}}
 @media(prefers-reduced-motion:reduce){.grammar-tokens>span,.grammar-topic{animation:none}.grammar-studio *{transition:none!important}.grammar-collections>button:hover{transform:none}}
+
+/* =========================================================================
+   DARK THEME SYSTEM ENHANCEMENTS
+   ========================================================================= */
+.dark body {
+  background-color: #030712;
+  color: #f1f5f9;
+}
+
+.dark .app-light {
+  background-color: #030712;
+  color: #f8fafc;
+}
+
+.dark .studio-sidebar {
+  background: linear-gradient(180deg, #090d16 0%, #0f172a 100%) !important;
+  border-right-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark .studio-topbar {
+  background: rgba(9, 13, 22, 0.85) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.dark .studio-mobile-nav {
+  background: rgba(9, 13, 22, 0.95) !important;
+  border-top-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.dark .streak-pill {
+  background: rgba(249, 115, 22, 0.15) !important;
+  color: #fb923c !important;
+  border-color: rgba(249, 115, 22, 0.3) !important;
+}
+
+.dark .topbar-voice {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #e2e8f0 !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+.dark .grammar-hero {
+  background: linear-gradient(120deg, #0f172a 30%, #1e1b4b) !important;
+  border-color: rgba(99, 102, 241, 0.3) !important;
+  color: #e2e8f0 !important;
+}
+
+.dark .grammar-studio {
+  color: #e2e8f0 !important;
+}
+
+.dark .grammar-topic {
+  background: rgba(15, 23, 42, 0.8) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  color: #e2e8f0 !important;
+}
+
+.dark .grammar-progress-strip,
+.dark .grammar-filters,
+.dark .grammar-collections > button {
+  background: rgba(15, 23, 42, 0.8) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  color: #e2e8f0 !important;
+}

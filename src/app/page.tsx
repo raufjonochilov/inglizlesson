@@ -10,9 +10,12 @@ import IeltsSimulator from '@/components/IeltsSimulator';
 import VocabBuilder from '@/components/VocabBuilder';
 import PronunciationCoach from '@/components/PronunciationCoach';
 import SarcasticCoach from '@/components/SarcasticCoach';
+import Dashboard from '@/components/Dashboard';
 import MotionLayer from '@/components/MotionLayer';
 
 import { Lesson, COURSE_UNITS } from '@/lib/data/curriculum';
+import { addXP, XP_REWARDS, getStats, saveStats } from '@/lib/gamification';
+import { applyTheme, getStoredTheme } from '@/lib/theme';
 
 export default function HomePage() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('lessons');
@@ -25,6 +28,8 @@ export default function HomePage() {
 
   useEffect(() => {
     setMounted(true);
+    // Initialize theme from storage
+    applyTheme(getStoredTheme());
 
     // Load persisted completed lessons
     const savedLessons = localStorage.getItem('lingua_completed_lessons');
@@ -46,19 +51,19 @@ export default function HomePage() {
     const todayStr = new Date().toDateString();
     const storedStreak = parseInt(localStorage.getItem('lingua_streak_days') || '1', 10);
 
+    let currentStreakVal = 1;
     if (lastActiveDate) {
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
 
       if (lastActiveDate === todayStr) {
-        setStreak(storedStreak);
+        currentStreakVal = storedStreak;
       } else if (lastActiveDate === yesterday.toDateString()) {
-        const newStreak = storedStreak + 1;
-        setStreak(newStreak);
-        localStorage.setItem('lingua_streak_days', newStreak.toString());
+        currentStreakVal = storedStreak + 1;
+        localStorage.setItem('lingua_streak_days', currentStreakVal.toString());
         localStorage.setItem('lingua_last_active_date', todayStr);
       } else {
-        setStreak(1);
+        currentStreakVal = 1;
         localStorage.setItem('lingua_streak_days', '1');
         localStorage.setItem('lingua_last_active_date', todayStr);
       }
@@ -66,11 +71,44 @@ export default function HomePage() {
       localStorage.setItem('lingua_last_active_date', todayStr);
       localStorage.setItem('lingua_streak_days', '1');
     }
+    setStreak(currentStreakVal);
+
+    // Sync gamification streak
+    const currentStats = getStats();
+    if (currentStats.currentStreak !== currentStreakVal) {
+      currentStats.currentStreak = currentStreakVal;
+      currentStats.longestStreak = Math.max(currentStats.longestStreak, currentStreakVal);
+      saveStats(currentStats);
+    }
   }, []);
 
-  const handleActivity = () => {
+  const handleActivity = (type: 'speaking' | 'vocab' | 'grammar' | 'ielts' | 'pronunciation' | 'sarcastic' = 'speaking') => {
     const todayStr = new Date().toDateString();
     localStorage.setItem('lingua_last_active_date', todayStr);
+
+    // Reward XP based on activity type
+    let xpAmount = 15;
+    let desc = 'Amaliyot bajarildi';
+    if (type === 'speaking') {
+      xpAmount = XP_REWARDS.SPEAKING_MESSAGE;
+      desc = "AI Repetitor bilan suhbat";
+    } else if (type === 'grammar') {
+      xpAmount = XP_REWARDS.GRAMMAR_CHECK;
+      desc = "Grammatika tekshirildi";
+    } else if (type === 'ielts') {
+      xpAmount = XP_REWARDS.IELTS_SESSION;
+      desc = "IELTS simulyatsiyasi mashqi";
+    } else if (type === 'vocab') {
+      xpAmount = XP_REWARDS.VOCAB_WORD;
+      desc = "Lug‘atdan yangi so‘z o‘rganildi";
+    } else if (type === 'pronunciation') {
+      xpAmount = XP_REWARDS.PRONUNCIATION_DRILL;
+      desc = "Talaffuz mashqi yakunlandi";
+    } else if (type === 'sarcastic') {
+      xpAmount = XP_REWARDS.SARCASTIC_COACH;
+      desc = "Professor Buster bilan bahs";
+    }
+    addXP(type, xpAmount, desc);
   };
 
   const handleSoundToggle = (val: boolean) => {
@@ -79,7 +117,9 @@ export default function HomePage() {
   };
 
   const handleLessonComplete = (lessonId: string) => {
-    handleActivity();
+    handleActivity('speaking');
+    addXP('lesson', XP_REWARDS.LESSON_COMPLETE, `Dars yakunlandi (#${lessonId})`);
+
     if (!completedLessonIds.includes(lessonId)) {
       const next = [...completedLessonIds, lessonId];
       setCompletedLessonIds(next);
@@ -89,23 +129,23 @@ export default function HomePage() {
 
   if (!mounted) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#f4f7fc]">
+      <div className="min-h-screen flex items-center justify-center bg-[#f4f7fc] dark:bg-slate-900">
         <div className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-          <span className="text-sm font-semibold text-slate-500">LinguaPulse AI yuklanmoqda...</span>
+          <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">LinguaPulse AI yuklanmoqda...</span>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="app-light relative min-h-screen flex flex-col bg-slate-50 text-slate-900 selection:bg-indigo-500 selection:text-white cyber-grid overflow-hidden">
+    <div className="app-light relative min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 selection:bg-indigo-500 selection:text-white cyber-grid overflow-hidden transition-colors duration-300">
       {/* Ambient 3D Glowing Atmospheric Orbs */}
-      <div className="fixed top-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full bg-indigo-600/15 blur-[120px] pointer-events-none animate-pulse-glow" />
-      <div className="fixed bottom-[-10%] right-[-10%] w-[600px] h-[600px] rounded-full bg-purple-600/15 blur-[140px] pointer-events-none animate-float-slow" />
-      <div className="fixed top-[40%] right-[20%] w-[400px] h-[400px] rounded-full bg-cyan-500/10 blur-[130px] pointer-events-none animate-float-reverse" />
+      <div className="fixed top-[-10%] left-[-10%] w-[500px] h-[500px] rounded-full bg-indigo-600/15 dark:bg-indigo-500/10 blur-[120px] pointer-events-none animate-pulse-glow" />
+      <div className="fixed bottom-[-10%] right-[-10%] w-[600px] h-[600px] rounded-full bg-purple-600/15 dark:bg-purple-500/10 blur-[140px] pointer-events-none animate-float-slow" />
+      <div className="fixed top-[40%] right-[20%] w-[400px] h-[400px] rounded-full bg-cyan-500/10 dark:bg-cyan-500/5 blur-[130px] pointer-events-none animate-float-reverse" />
 
-      {/* Floating 3D Navigation */}
+      {/* Floating Navigation */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={(tab) => {
@@ -122,9 +162,20 @@ export default function HomePage() {
         streak={streak}
       />
 
-      {/* Main Content View with 3D Depth */}
+      {/* Main Content View */}
       <main className={`studio-main module-${activeTab} relative z-10 flex-1`}>
         <div key={activeTab} className="module-entrance">
+        {activeTab === 'dashboard' && (
+          <Dashboard
+            soundEnabled={soundEnabled}
+            onActivity={() => handleActivity('speaking')}
+            onNavigate={(tab) => {
+              setActiveTab(tab as ActiveTab);
+              window.scrollTo({ top: 0, behavior: 'instant' });
+            }}
+          />
+        )}
+
         {activeTab === 'lessons' && (
           selectedLesson ? (
             <InteractiveLessonPlayer
@@ -148,7 +199,7 @@ export default function HomePage() {
           <SpeakingPartner
             apiKey={apiKey}
             soundEnabled={soundEnabled}
-            onActivity={handleActivity}
+            onActivity={() => handleActivity('speaking')}
           />
         )}
 
@@ -156,7 +207,7 @@ export default function HomePage() {
           <SarcasticCoach
             apiKey={apiKey}
             soundEnabled={soundEnabled}
-            onActivity={handleActivity}
+            onActivity={() => handleActivity('sarcastic')}
           />
         )}
 
@@ -164,7 +215,7 @@ export default function HomePage() {
           <GrammarDoctor
             apiKey={apiKey}
             soundEnabled={soundEnabled}
-            onActivity={handleActivity}
+            onActivity={() => handleActivity('grammar')}
           />
         )}
 
@@ -172,21 +223,21 @@ export default function HomePage() {
           <IeltsSimulator
             apiKey={apiKey}
             soundEnabled={soundEnabled}
-            onActivity={handleActivity}
+            onActivity={() => handleActivity('ielts')}
           />
         )}
 
         {activeTab === 'vocab' && (
           <VocabBuilder
             soundEnabled={soundEnabled}
-            onActivity={handleActivity}
+            onActivity={() => handleActivity('vocab')}
           />
         )}
 
         {activeTab === 'pronunciation' && (
           <PronunciationCoach
             soundEnabled={soundEnabled}
-            onActivity={handleActivity}
+            onActivity={() => handleActivity('pronunciation')}
           />
         )}
         </div>
@@ -195,6 +246,3 @@ export default function HomePage() {
     </div>
   );
 }
-
-
-
